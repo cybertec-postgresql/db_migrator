@@ -1,0 +1,4 @@
+comment = 'Tools to migrate other databases to PostgreSQL'
+default_version = '0.9.0'
+superuser = false
+relocatable = true
