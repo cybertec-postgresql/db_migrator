@@ -73,7 +73,7 @@ BEGIN
 END;$$;
 
 COMMENT ON FUNCTION materialize_foreign_table(name, name, boolean, name) IS
-   'turn an Oracle foreign table into a PostgreSQL table';
+   'turn a foreign table into a PostgreSQL table';
 
 CREATE FUNCTION db_migrate_refresh(
    plugin         name,
@@ -171,6 +171,7 @@ BEGIN
                  'SELECT %s(%L)',
                  v_translate_expression,
                  v_default
+              ) INTO expr;
 
       EXECUTE format(
                  'SELECT %s(%L)',
@@ -204,8 +205,8 @@ BEGIN
             expr
          )
          ON CONFLICT ON CONSTRAINT columns_pkey DO UPDATE SET
-            oracle_name = EXCLUDED.orig_column,
-            oracle_type = EXCLUDED.orig_type;
+            orig_name = EXCLUDED.orig_column,
+            orig_type = EXCLUDED.orig_type;
    END LOOP;
 
    CLOSE c_col;
@@ -219,8 +220,8 @@ BEGIN
                    '   FROM %I.tables\n'
                    '   WHERE $1 IS NULL OR schema =ANY ($1)\n'
                    'ON CONFLICT ON CONSTRAINT tables_pkey DO UPDATE SET\n'
-                   '   oracle_schema = EXCLUDED.orig_schema,\n'
-                   '   oracle_name   = EXCLUDED.orig_name',
+                   '   orig_schema = EXCLUDED.orig_schema,\n'
+                   '   orig_name   = EXCLUDED.orig_name',
                   v_translate_identifier,
                   v_translate_identifier,
                   staging_schema)
@@ -297,7 +298,7 @@ BEGIN
                    'ON CONFLICT ON CONSTRAINT keys_pkey DO UPDATE SET\n'
                    '   "deferrable"  = EXCLUDED."deferrable",\n'
                    '   deferred      = EXCLUDED.deferred,\n'
-                   '   column_name   = oracle_tolower(EXCLUDED.column_name),\n'
+                   '   column_name   = EXCLUDED.column_name,\n'
                    '   is_primary    = EXCLUDED.is_primary',
                   v_translate_identifier,
                   v_translate_identifier,
@@ -373,7 +374,7 @@ BEGIN
                    '          position,\n'
                    '          descend,\n'
                    '          is_expression,\n'
-                   '          CASE WHEN is_expression THEN ''('' || lower(column_name) || '')'' ELSE oracle_tolower(column_name)::text END\n'
+                   '          CASE WHEN is_expression THEN ''('' || lower(column_name) || '')'' ELSE %s(column_name)::text END\n'
                    '   FROM %I.index_columns\n'
                    '   WHERE $1 IS NULL OR schema =ANY ($1)\n'
                    'ON CONFLICT ON CONSTRAINT index_columns_pkey DO UPDATE SET\n'
@@ -382,6 +383,7 @@ BEGIN
                    '   descend       = EXCLUDED.descend,\n'
                    '   is_expression = EXCLUDED.is_expression,\n'
                    '   column_name   = EXCLUDED.column_name',
+                  v_translate_identifier,
                   v_translate_identifier,
                   v_translate_identifier,
                   v_translate_identifier,
@@ -790,29 +792,10 @@ BEGIN
       error_message text NOT NULL
    );
 
-   /* table to record errors from "oracle_migrate_test_data" */
-   CREATE TABLE test_error (
-      log_time   timestamp with time zone NOT NULL DEFAULT current_timestamp,
-      schema     name                     NOT NULL,
-      table_name name                     NOT NULL,
-      rowid      text                     NOT NULL,
-      message    text                     NOT NULL,
-      PRIMARY KEY (schema, table_name, log_time, rowid)
-   );
-
-   /* table for cumulative errors from "oracle_migrate_test_data" */
-   CREATE TABLE test_error_stats (
-      log_time   timestamp with time zone NOT NULL,
-      schema     name                     NOT NULL,
-      table_name name                     NOT NULL,
-      errcount   bigint                   NOT NULL,
-      PRIMARY KEY (schema, table_name, log_time)
-   );
-
    /* reset client_min_messages */
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
 
-   /* copy data from the Oracle stage to the PostgreSQL stage */
+   /* copy data from the remote stage to the PostgreSQL stage */
    EXECUTE format('SET LOCAL search_path = %I', extschema);
    RETURN db_migrate_refresh(plugin, staging_schema, pgstage_schema, only_schemas);
 END;$$;
@@ -820,57 +803,86 @@ END;$$;
 COMMENT ON FUNCTION db_migrate_prepare(name, name, name, name[], integer) IS
    'first step of "db_migrate": create and populate staging schemas';
 
-CREATE FUNCTION oracle_migrate_mkforeign(
+CREATE FUNCTION db_migrate_mkforeign(
+   plugin         name,
    server         name,
-   staging_schema name    DEFAULT NAME 'ora_stage',
+   staging_schema name    DEFAULT NAME 'fdw_stage',
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL,
-   max_long       integer DEFAULT 32767
+   options        jsonb
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
 $$DECLARE
-   extschema    name;
-   s            name;
-   t            name;
-   sch          name;
-   seq          name;
-   minv         numeric;
-   maxv         numeric;
-   incr         numeric;
-   cycl         boolean;
-   cachesiz     integer;
-   lastval      numeric;
-   tab          name;
-   colname      name;
-   typ          text;
-   pos          integer;
-   nul          boolean;
-   fsch         text;
-   ftab         text;
-   o_fsch       text;
-   o_ftab       text;
-   o_sch        name;
-   o_tab        name;
-   stmt         text;
-   separator    text;
-   old_msglevel text;
-   errmsg       text;
-   detail       text;
-   rc           integer := 0;
+   extschema               name;
+   v_plugin_schema         name;
+   v_translate_identifier  regproc;
+   v_create_foreign_tab    regproc;
+   s                       name;
+   t                       name;
+   sch                     name;
+   seq                     name;
+   minv                    numeric;
+   maxv                    numeric;
+   incr                    numeric;
+   cycl                    boolean;
+   cachesiz                integer;
+   lastval                 numeric;
+   tab                     name;
+   colname                 name;
+   fcolname                text;
+   typ                     text;
+   pos                     integer;
+   nul                     boolean;
+   fsch                    text;
+   ftab                    text;
+   o_fsch                  text;
+   o_ftab                  text;
+   o_sch                   name;
+   o_tab                   name;
+   col_array               name[] := ARRAY[]::name[];
+   fcol_array              text[] := ARRAY[]::text[];
+   type_array              text[] := ARRAY[]::text[];
+   null_array              boolean[] := ARRAY[]::boolean[];
+   old_msglevel            text;
+   errmsg                  text;
+   detail                  text;
+   rc                      integer := 0;
 BEGIN
    /* remember old setting */
    old_msglevel := current_setting('client_min_messages');
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
 
+   /* get the plugin callback functions */
+   SELECT extnamespace::regnamespace::name INTO v_plugin_schema
+   FROM pg_extensions
+   WHERE extname = plugin;
+
+   IF NOT FOUND THEN
+      RAISE EXCEPTION 'extension "%" is not installed', plugin;
+   END IF;
+
+   EXECUTE format(
+              E'SELECT create_foreign_table_fun,\n'
+              '       translate_identifier_fun\n'
+              'FROM %I.db_migrator_callback()',
+              v_plugin_schema
+           ) INTO v_create_foreign_tab,
+                  v_translate_identifier;
+
    /* set "search_path" to the PostgreSQL staging schema and the extension schema */
    SELECT extnamespace::regnamespace INTO extschema
       FROM pg_catalog.pg_extension
-      WHERE extname = 'ora_migrator';
+      WHERE extname = 'db_migrator';
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
-   /* translate schema names to lower case */
-   only_schemas := array_agg(oracle_tolower(os)) FROM unnest(only_schemas) os;
+   /* translate schema names */
+   EXECUTE format(
+              'SELECT array_agg(%s(os)) FROM unnest($1) AS os',
+              v_translate_identifier
+           )
+   USING only_schemas
+   INTO only_schemas;
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating schemas ...';
@@ -970,18 +982,17 @@ BEGIN
    /* create foreign tables */
    o_sch := '';
    o_tab := '';
-   stmt := '';
-   separator := '';
-   FOR sch, tab, colname, pos, typ, nul, fsch, ftab IN
+   FOR sch, tab, colname, fcolname, pos, typ, nul, fsch, ftab IN
       EXECUTE format(
          E'SELECT schema,\n'
           '       table_name,\n'
           '       pc.column_name,\n'
+          '       pc.orig_column,\n'
           '       pc.position,\n'
           '       pc.type_name,\n'
           '       pc.nullable,\n'
-          '       pt.oracle_schema,\n'
-          '       pt.oracle_name\n'
+          '       pt.orig_schema,\n'
+          '       pt.orig_name\n'
           'FROM columns pc\n'
           '   JOIN tables pt\n'
           '      USING (schema, table_name)\n'
@@ -992,9 +1003,13 @@ BEGIN
       IF o_sch <> sch OR o_tab <> tab THEN
          IF o_tab <> '' THEN
             BEGIN
-               EXECUTE stmt || format(E') SERVER %I\n'
-                                       '   OPTIONS (schema ''%s'', table ''%s'', readonly ''true'', max_long ''%s'')',
-                                      server, o_fsch, o_ftab, max_long);
+               /* create the foreign table */
+               EXECUTE format(
+                          'SELECT %s($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+                          v_create_foreign_tab
+                       )
+               USING server, o_sch, o_tab, o_fsch, o_ftab,
+                     col_array, fcol_array, type_array, null_array, options;
             EXCEPTION
                WHEN others THEN
                   /* turn the error into a warning */
@@ -1028,26 +1043,32 @@ BEGIN
             END;
          END IF;
 
-         stmt := format(E'CREATE FOREIGN TABLE %I.%I (\n', sch, tab);
          o_sch := sch;
          o_tab := tab;
          o_fsch := fsch;
          o_ftab := ftab;
-         separator := '';
+         col_array := ARRAY[]::name[];
+         fcol_array := ARRAY[]::text[];
+         type_array := ARRAY[]::text[];
+         null_array := ARRAY[]::boolean[];
       END IF;
 
-      stmt := stmt || format(E'   %s%I %s%s\n',
-                             separator, colname, typ,
-                             CASE WHEN nul THEN '' ELSE ' NOT NULL' END);
-      separator := ', ';
+      col_array := col_array || colname;
+      fcol_array := fcol_array || fcolname;
+      type_array := type_array || typ;
+      null_array := null_array || nul;
    END LOOP;
 
    /* last foreign table */
    IF o_tab <> '' THEN
       BEGIN
-         EXECUTE stmt || format(E') SERVER %I\n'
-                                 '   OPTIONS (schema ''%s'', table ''%s'', readonly ''true'', max_long ''%s'')',
-                                server, o_fsch, o_ftab, max_long);
+         /* create the foreign table */
+         EXECUTE format(
+                    'SELECT %s($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+                    v_create_foreign_tab
+                 )
+         USING server, o_sch, o_tab, o_fsch, o_ftab,
+               col_array, fcol_array, type_array, null_array, options;
       EXCEPTION
          WHEN others THEN
             /* turn the error into a warning */
@@ -1087,11 +1108,11 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION oracle_migrate_mkforeign(name, name, name, name[], integer) IS
-   'second step of "oracle_migrate": create schemas, sequences and foreign tables';
+COMMENT ON FUNCTION db_migrate_mkforeign(name, name, name, name[], integer) IS
+   'second step of "db_migrate": create schemas, sequences and foreign tables';
 
-CREATE FUNCTION oracle_migrate_tables(
-   staging_schema name    DEFAULT NAME 'ora_stage',
+CREATE FUNCTION db_migrate_tables(
+   staging_schema name    DEFAULT NAME 'fdw_stage',
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL,
    with_data      boolean DEFAULT TRUE
@@ -1109,7 +1130,7 @@ BEGIN
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
 
-   /* set "search_path" to the Oracle stage and the extension schema */
+   /* set "search_path" to the remote stage and the extension schema */
    SELECT extnamespace::regnamespace INTO extschema
       FROM pg_catalog.pg_extension
       WHERE extname = 'ora_migrator';
@@ -1130,7 +1151,7 @@ BEGIN
       SET LOCAL client_min_messages = warning;
 
       /* turn that foreign table into a real table */
-      IF NOT oracle_materialize(sch, tab, with_data, pgstage_schema) THEN
+      IF NOT materialize_foreign_table(sch, tab, with_data, pgstage_schema) THEN
          rc := rc + 1;
          /* remove the foreign table if it failed */
          EXECUTE format('DROP FOREIGN TABLE %I.%I', sch, tab);
@@ -1143,10 +1164,10 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION oracle_migrate_tables(name, name, name[], boolean) IS
-   'third step of "oracle_migrate": copy tables from Oracle';
+COMMENT ON FUNCTION db_migrate_tables(name, name, name[], boolean) IS
+   'third step of "db_migrate": copy table data from the remote database';
 
-CREATE FUNCTION oracle_migrate_functions(
+CREATE FUNCTION db_migrate_functions(
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL
 ) RETURNS integer
@@ -1166,7 +1187,7 @@ BEGIN
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
 
-   /* set "search_path" to the Oracle stage and the extension schema */
+   /* set "search_path" to the remote stage and the extension schema */
    SELECT extnamespace::regnamespace INTO extschema
       FROM pg_catalog.pg_extension
       WHERE extname = 'ora_migrator';
@@ -1223,10 +1244,10 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION oracle_migrate_functions(name, name[]) IS
-   'fourth step of "oracle_migrate": create functions';
+COMMENT ON FUNCTION db_migrate_functions(name, name[]) IS
+   'fourth step of "db_migrate": create functions';
 
-CREATE FUNCTION oracle_migrate_triggers(
+CREATE FUNCTION db_migrate_triggers(
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL
 ) RETURNS integer
@@ -1252,7 +1273,7 @@ BEGIN
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
 
-   /* set "search_path" to the Oracle stage and the extension schema */
+   /* set "search_path" to the remote stage and the extension schema */
    SELECT extnamespace::regnamespace INTO extschema
       FROM pg_catalog.pg_extension
       WHERE extname = 'ora_migrator';
@@ -1327,10 +1348,10 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION oracle_migrate_triggers(name, name[]) IS
-   'fifth step of "oracle_migrate": create triggers';
+COMMENT ON FUNCTION db_migrate_triggers(name, name[]) IS
+   'fifth step of "db_migrate": create triggers';
 
-CREATE FUNCTION oracle_migrate_views(
+CREATE FUNCTION db_migrate_views(
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL
 ) RETURNS integer
@@ -1353,7 +1374,7 @@ BEGIN
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
 
-   /* set "search_path" to the Oracle stage and the extension schema */
+   /* set "search_path" to the remote stage and the extension schema */
    SELECT extnamespace::regnamespace INTO extschema
       FROM pg_catalog.pg_extension
       WHERE extname = 'ora_migrator';
@@ -1426,10 +1447,10 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION oracle_migrate_views(name, name[]) IS
-   'sixth step of "oracle_migrate": create views';
+COMMENT ON FUNCTION db_migrate_views(name, name[]) IS
+   'sixth step of "db_migrate": create views';
 
-CREATE FUNCTION oracle_migrate_constraints(
+CREATE FUNCTION db_migrate_constraints(
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL
 ) RETURNS integer
@@ -1904,11 +1925,11 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION oracle_migrate_constraints(name, name[])
-   IS 'seventh step of "oracle_migrate": create constraints and indexes';
+COMMENT ON FUNCTION db_migrate_constraints(name, name[])
+   IS 'seventh step of "db_migrate": create constraints and indexes';
 
-CREATE FUNCTION oracle_migrate_finish(
-   staging_schema name    DEFAULT NAME 'ora_stage',
+CREATE FUNCTION db_migrate_finish(
+   staging_schema name    DEFAULT NAME 'fdw_stage',
    pgstage_schema name    DEFAULT NAME 'pgsql_stage'
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
@@ -1931,15 +1952,16 @@ BEGIN
    RETURN 0;
 END;$$;
 
-COMMENT ON FUNCTION oracle_migrate_finish(name, name) IS
-   'final step of "oracle_migrate": drop staging schema';
+COMMENT ON FUNCTION db_migrate_finish(name, name) IS
+   'final step of "db_migrate": drop staging schemas';
 
-CREATE FUNCTION oracle_migrate(
+CREATE FUNCTION db_migrate(
+   plugin         name,
    server         name,
-   staging_schema name    DEFAULT NAME 'ora_stage',
+   staging_schema name    DEFAULT NAME 'fdw_stage',
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL,
-   max_long       integer DEFAULT 32767,
+   options        jsonb,
    with_data      boolean DEFAULT TRUE
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
@@ -1955,305 +1977,56 @@ BEGIN
 
    /*
     * First step:
-    * Create staging schema and define the oracle metadata views there.
+    * Create staging schema and define the remote metadata views there.
     */
-   rc := rc + oracle_migrate_prepare(server, staging_schema, pgstage_schema, only_schemas, max_long);
+   rc := rc + db_migrate_prepare(plugin, server, staging_schema, pgstage_schema, only_schemas, options);
 
    /*
     * Second step:
     * Create the destination schemas and the foreign tables and sequences there.
     */
-   rc := rc + oracle_migrate_mkforeign(server, staging_schema, pgstage_schema, only_schemas, max_long);
+   rc := rc + db_migrate_mkforeign(plugin, server, staging_schema, pgstage_schema, only_schemas, options);
 
    /*
     * Third step:
-    * Copy the tables over from Oracle.
+    * Copy the tables data from the remote database.
     */
-   rc := rc + oracle_migrate_tables(staging_schema, pgstage_schema, only_schemas, with_data);
+   rc := rc + db_migrate_tables(staging_schema, pgstage_schema, only_schemas, with_data);
 
    /*
     * Fourth step:
     * Create functions (this won't do anything since they have "migrate = FALSE").
     */
-   rc := rc + oracle_migrate_functions(pgstage_schema, only_schemas);
+   rc := rc + db_migrate_functions(pgstage_schema, only_schemas);
 
    /*
     * Fifth step:
     * Create triggers (this won't do anything since they have "migrate = FALSE").
     */
-   rc := rc + oracle_migrate_triggers(pgstage_schema, only_schemas);
+   rc := rc + db_migrate_triggers(pgstage_schema, only_schemas);
 
    /*
     * Sixth step:
     * Create views.
     */
-   rc := rc + oracle_migrate_views(pgstage_schema, only_schemas);
+   rc := rc + db_migrate_views(pgstage_schema, only_schemas);
 
    /*
     * Seventh step:
     * Create constraints and indexes.
     */
-   rc := rc + oracle_migrate_constraints(pgstage_schema, only_schemas);
+   rc := rc + db_migrate_constraints(pgstage_schema, only_schemas);
 
    /*
     * Final step:
     * Drop the staging schema.
     */
-   rc := rc + oracle_migrate_finish(staging_schema, pgstage_schema);
+   rc := rc + db_migrate_finish(staging_schema, pgstage_schema);
 
    RAISE NOTICE 'Migration completed with % errors.', rc;
 
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION oracle_migrate(name, name, name, name[], integer, boolean) IS
-   'migrate an Oracle database from a foreign server to PostgreSQL';
-
-CREATE FUNCTION oracle_code_count(
-   pgstage_schema name DEFAULT NAME 'pgsql_stage'
-) RETURNS TABLE (
-   object_type text,
-   number bigint,
-   lines bigint,
-   bytes bigint
-) LANGUAGE plpgsql SET search_path = pg_catalog AS
-$$BEGIN
-   RETURN QUERY EXECUTE
-      format(
-         E'SELECT ''function'' AS object_type,\n'
-         '       count(*) AS number,\n'
-         '       coalesce(sum((SELECT count(*) FROM regexp_matches(oracle_source, E''\\n'', ''g'')))::bigint, 0) AS lines,\n'
-         '       coalesce(sum(octet_length(oracle_source)), 0) AS bytes\n'
-         'FROM %I.functions\n'
-         'UNION ALL\n'
-         'SELECT ''trigger'' AS object_type,\n'
-         '       count(*) AS number,\n'
-         '       coalesce(sum((SELECT count(*) + 1 FROM regexp_matches(oracle_source, E''\\n'', ''g'')))::bigint, 0) AS lines,\n'
-         '       coalesce(sum(octet_length(oracle_source)), 0) AS bytes\n'
-         'FROM %I.triggers\n'
-         'UNION ALL\n'
-         'SELECT ''package'' AS object_type,\n'
-         '       count(*) AS number,\n'
-         '       coalesce(sum((SELECT count(*) FROM regexp_matches(source, E''\\n'', ''g'')))::bigint, 0) AS lines,\n'
-         '       coalesce(sum(octet_length(source)), 0) AS bytes\n'
-         'FROM %I.packages\n'
-         'WHERE is_body\n'
-         'UNION ALL\n'
-         'SELECT ''view'' AS object_type,\n'
-         '       count(*) AS number,\n'
-         '       coalesce(sum((SELECT count(*) + 1 FROM regexp_matches(oracle_def, E''\\n'', ''g'')))::bigint, 0) AS lines,\n'
-         '       coalesce(sum(octet_length(oracle_def)), 0) AS bytes\n'
-         'FROM %I.views',
-         pgstage_schema,
-         pgstage_schema,
-         pgstage_schema,
-         pgstage_schema
-      );
-END;$$;
-
-COMMENT ON FUNCTION oracle_code_count(name) IS
-   'provide statistics on the PL/SQL code and views in the Oracle database';
-
-CREATE FUNCTION oracle_test_table(
-   server         name,
-   schema         name,
-   table_name     name,
-   pgstage_schema name DEFAULT NAME 'pgsql_stage'
-) RETURNS TABLE (
-   rowid          text,
-   message        text
-) LANGUAGE plpgsql VOLATILE STRICT SET search_path = pg_catalog AS
-$$DECLARE
-   v_schema     text;
-   v_table      text;
-   v_column     text;
-   v_oratype    text;
-   v_where      text[] := ARRAY[]::text[];
-   v_select     text[] := ARRAY[]::text[];
-   old_msglevel text;
-BEGIN
-   /* remember old setting */
-   old_msglevel := current_setting('client_min_messages');
-   /* make the output less verbose */
-   SET LOCAL client_min_messages = warning;
-
-   EXECUTE format('SET LOCAL search_path = %I', pgstage_schema);
-
-   /* check if the table exists */
-   IF NOT EXISTS (
-         SELECT 1 FROM tables
-         WHERE tables.schema = $2 AND tables.table_name = $3
-      )
-   THEN
-      RAISE EXCEPTION '%',
-         format('table %I.%I not found in %I.tables',
-                $2,
-                $3,
-                $4
-         );
-   END IF;
-
-   /*
-    * The idea is to create a temporary foreign table on an SQL statement
-    * that performs the required checks on the Oracle side.
-    */
-
-   FOR v_schema, v_table, v_column, v_oratype IN
-      SELECT t.oracle_schema AS schema,
-             t.oracle_name AS table_name,
-             c.oracle_name AS column_name,
-             c.oracle_type
-      FROM tables AS t
-         JOIN columns AS c USING (schema, table_name)
-      WHERE t.schema = $2
-        AND t.table_name = $3
-        /* unfortunately our trick doesn't work for CLOB */
-        AND c.oracle_type IN ('VARCHAR2', 'NVARCHAR2', 'CHAR', 'NCHAR', 'VARCHAR')
-      ORDER BY c.position
-   LOOP
-      /* test for zero bytes */
-      v_select := v_select
-         || format(
-               E'CASE WHEN %I LIKE ''''%%'''' || chr(0) || ''''%%'''' THEN ''''zero byte in %I '''' END',
-               v_column,
-               v_column
-            );
-
-      v_where := v_where
-         || format(
-               E'(%I LIKE ''''%%'''' || chr(0) || ''''%%'''')',
-               v_column,
-               v_column
-            );
-
-      /*
-       * Test for corrupt string data.
-       * The trick is to convert the string to a different encoding and back.
-       * We have to choose an encoding that
-       * - can store all possible characters
-       * - is different from the original encoding (else nothing is done)
-       * If there are bad bytes, they will be replaced with "replacement characters".
-       */
-      IF v_oratype IN ('NVARCHAR2', 'NCHAR') THEN
-         /* NVARCHAR2 and NCHAR are stored in AS16UTF16 or UTF8 */
-         v_select := v_select
-            || format(
-                  E'CASE WHEN convert(convert(%I, ''''AL32UTF8''''), (SELECT value FROM nls_database_parameters WHERE parameter = ''''NLS_NCHAR_CHARACTERSET''''), ''''AL32UTF8'''') <> %I THEN ''''invalid byte in %I '''' END',
-                  v_column,
-                  v_column,
-                  v_column
-               );
-
-         v_where := v_where
-            || format(
-                  E'(convert(convert(%I, ''''AL32UTF8''''), (SELECT value FROM nls_database_parameters WHERE parameter = ''''NLS_NCHAR_CHARACTERSET''''), ''''AL32UTF8'''') <> %I)',
-                  v_column,
-                  v_column
-               );
-      ELSE
-         /* all other strings are *never* stored in AL16UTF16 */
-         v_select := v_select
-            || format(
-                  E'CASE WHEN convert(convert(%I, ''''AL16UTF16''''), (SELECT value FROM nls_database_parameters WHERE parameter = ''''NLS_CHARACTERSET''''), ''''AL16UTF16'''') <> %I THEN ''''invalid byte in %I '''' END',
-                  v_column,
-                  v_column,
-                  v_column
-               );
-
-         v_where := v_where
-            || format(
-                  E'(convert(convert(%I, ''''AL16UTF16''''), (SELECT value FROM nls_database_parameters WHERE parameter = ''''NLS_CHARACTERSET''''), ''''AL16UTF16'''') <> %I)',
-                  v_column,
-                  v_column
-               );
-      END IF;
-   END LOOP;
-
-   /* if there is no string column, we are done */
-   IF cardinality(v_where) = 0 THEN
-      RETURN;
-   END IF;
-
-   DROP FOREIGN TABLE IF EXISTS pg_temp.oracle_errors;
-
-   EXECUTE
-      format(
-         E'CREATE FOREIGN TABLE pg_temp.oracle_errors (\n'
-         '   rowid   text NOT NULL,\n'
-         '   message text NOT NULL\n'
-         ') SERVER %I OPTIONS (\n'
-         '   table E''(SELECT CAST(rowid AS varchar2(100)) AS row_id,\\n''\n'
-         '         ''       %s AS message\\n''\n'
-         '         ''FROM %I.%I\\n''\n'
-         '         ''WHERE %s)'')',
-         server,
-         array_to_string(v_select, E'\\n''\n         ''       || '),
-         v_schema,
-         v_table,
-         array_to_string(v_where, E'\\n''\n         ''   OR ')
-      );
-
-   /* reset client_min_messages */
-   EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
-
-   RETURN QUERY SELECT * FROM pg_temp.oracle_errors;
-END;$$;
-
-COMMENT ON FUNCTION oracle_test_table(name, name, name, name) IS
-   'test an Oracle table for potential migration problems';
-
-CREATE FUNCTION oracle_migrate_test_data(
-   server         name,
-   pgstage_schema name DEFAULT NAME 'pgsql_stage',
-   only_schemas   name[]  DEFAULT NULL
-) RETURNS bigint
-   LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog AS
-$$DECLARE
-   extschema text;
-   v_schema  text;
-   v_table   text;
-BEGIN
-   /* set "search_path" to the PostgreSQL staging schema and the extension schema */
-   SELECT extnamespace::regnamespace INTO extschema
-      FROM pg_catalog.pg_extension
-      WHERE extname = 'ora_migrator';
-   EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
-
-   /* translate schema names to lower case */
-   only_schemas := array_agg(oracle_tolower(os)) FROM unnest(only_schemas) os;
-
-   /* purge the error detail log */
-   TRUNCATE test_error;
-
-   /* collect the errors from each table */
-   FOR v_schema, v_table IN
-      SELECT schema, table_name FROM tables
-      WHERE only_schemas IS NULL
-         OR schema =ANY (only_schemas)
-   LOOP
-      INSERT INTO test_error
-         (schema, table_name, rowid, message)
-      SELECT v_schema,
-             v_table,
-             err.rowid,
-             err.message
-      FROM oracle_test_table(server, v_schema, v_table, pgstage_schema) AS err;
-   END LOOP;
-
-   /* add error summary to the statistics table */
-   INSERT INTO test_error_stats
-      (log_time, schema, table_name, errcount)
-   SELECT current_timestamp,
-          schema,
-          table_name,
-          count(*)
-   FROM test_error
-   GROUP BY schema, table_name;
-
-   RETURN (SELECT sum(errcount)
-           FROM test_error_stats
-           WHERE log_time = current_timestamp);
-END;$$;
-
-COMMENT ON FUNCTION oracle_migrate_test_data(name, name, name[]) IS
-   'test all Oracle table for potential migration problems';
+COMMENT ON FUNCTION db_migrate(name, name, name, name, name[], jsonb, boolean) IS
+   'migrate a remote database from a foreign server to PostgreSQL';
