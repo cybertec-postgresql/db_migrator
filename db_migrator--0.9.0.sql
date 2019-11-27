@@ -881,8 +881,8 @@ BEGIN
               'SELECT array_agg(%s(os)) FROM unnest($1) AS os',
               v_translate_identifier
            )
-   USING only_schemas
-   INTO only_schemas;
+   INTO only_schemas
+   USING only_schemas;
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating schemas ...';
@@ -1119,16 +1119,33 @@ CREATE FUNCTION db_migrate_tables(
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
 $$DECLARE
-   old_msglevel text;
-   extschema    name;
-   sch          name;
-   tab          name;
-   rc           integer := 0;
+   old_msglevel           text;
+   v_plugin_schema        name;
+   v_translate_identifier regproc;
+   extschema              name;
+   sch                    name;
+   tab                    name;
+   rc                     integer := 0;
 BEGIN
    /* remember old setting */
    old_msglevel := current_setting('client_min_messages');
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
+
+   /* get the plugin callback functions */
+   SELECT extnamespace::regnamespace::name INTO v_plugin_schema
+   FROM pg_extensions
+   WHERE extname = plugin;
+
+   IF NOT FOUND THEN
+      RAISE EXCEPTION 'extension "%" is not installed', plugin;
+   END IF;
+
+   EXECUTE format(
+              E'SELECT translate_identifier_fun\n'
+              'FROM %I.db_migrator_callback()',
+              v_plugin_schema
+           ) INTO v_translate_identifier;
 
    /* set "search_path" to the remote stage and the extension schema */
    SELECT extnamespace::regnamespace INTO extschema
@@ -1137,7 +1154,12 @@ BEGIN
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
    /* translate schema names to lower case */
-   only_schemas := array_agg(oracle_tolower(os)) FROM unnest(only_schemas) os;
+   EXECUTE format(
+              'SELECT array_agg(%s(os)) FROM unnest($1) AS os',
+              v_translate_identifier
+           )
+   INTO only_schemas
+   USING only_schemas;
 
    /* loop through all foreign tables to be migrated */
    FOR sch, tab IN
@@ -1173,19 +1195,36 @@ CREATE FUNCTION db_migrate_functions(
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog SET check_function_bodies = off AS
 $$DECLARE
-   extschema    name;
-   sch          name;
-   fname        name;
-   src          text;
-   errmsg       text;
-   detail       text;
-   old_msglevel text;
-   rc           integer := 0;
+   old_msglevel           text;
+   v_plugin_schema        name;
+   v_translate_identifier regproc;
+   extschema              name;
+   sch                    name;
+   fname                  name;
+   src                    text;
+   errmsg                 text;
+   detail                 text;
+   rc                     integer := 0;
 BEGIN
    /* remember old setting */
    old_msglevel := current_setting('client_min_messages');
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
+
+   /* get the plugin callback functions */
+   SELECT extnamespace::regnamespace::name INTO v_plugin_schema
+   FROM pg_extensions
+   WHERE extname = plugin;
+
+   IF NOT FOUND THEN
+      RAISE EXCEPTION 'extension "%" is not installed', plugin;
+   END IF;
+
+   EXECUTE format(
+              E'SELECT translate_identifier_fun\n'
+              'FROM %I.db_migrator_callback()',
+              v_plugin_schema
+           ) INTO v_translate_identifier;
 
    /* set "search_path" to the remote stage and the extension schema */
    SELECT extnamespace::regnamespace INTO extschema
@@ -1194,7 +1233,13 @@ BEGIN
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
    /* translate schema names to lower case */
-   only_schemas := array_agg(oracle_tolower(os)) FROM unnest(only_schemas) os;
+   EXECUTE format(
+              'SELECT array_agg(%s(os)) FROM unnest($1) AS os',
+              v_translate_identifier
+           )
+   INTO only_schemas
+   USING only_schemas;
+
    FOR sch, fname, src IN
       SELECT schema, function_name, source
       FROM functions
@@ -1253,25 +1298,42 @@ CREATE FUNCTION db_migrate_triggers(
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog SET check_function_bodies = off AS
 $$DECLARE
-   extschema    name;
-   sch          name;
-   tabname      name;
-   trigname     name;
-   bef          boolean;
-   event        text;
-   eachrow      boolean;
-   whencl       text;
-   ref          text;
-   src          text;
-   errmsg       text;
-   detail       text;
-   old_msglevel text;
-   rc           integer := 0;
+   old_msglevel           text;
+   v_plugin_schema        name;
+   v_translate_identifier regproc;
+   extschema              name;
+   sch                    name;
+   tabname                name;
+   trigname               name;
+   bef                    boolean;
+   event                  text;
+   eachrow                boolean;
+   whencl                 text;
+   ref                    text;
+   src                    text;
+   errmsg                 text;
+   detail                 text;
+   rc                     integer := 0;
 BEGIN
    /* remember old setting */
    old_msglevel := current_setting('client_min_messages');
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
+
+   /* get the plugin callback functions */
+   SELECT extnamespace::regnamespace::name INTO v_plugin_schema
+   FROM pg_extensions
+   WHERE extname = plugin;
+
+   IF NOT FOUND THEN
+      RAISE EXCEPTION 'extension "%" is not installed', plugin;
+   END IF;
+
+   EXECUTE format(
+              E'SELECT translate_identifier_fun\n'
+              'FROM %I.db_migrator_callback()',
+              v_plugin_schema
+           ) INTO v_translate_identifier;
 
    /* set "search_path" to the remote stage and the extension schema */
    SELECT extnamespace::regnamespace INTO extschema
@@ -1280,7 +1342,13 @@ BEGIN
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
    /* translate schema names to lower case */
-   only_schemas := array_agg(oracle_tolower(os)) FROM unnest(only_schemas) os;
+   EXECUTE format(
+              'SELECT array_agg(%s(os)) FROM unnest($1) AS os',
+              v_translate_identifier
+           )
+   INTO only_schemas
+   USING only_schemas;
+
    FOR sch, tabname, trigname, bef, event, eachrow, whencl, ref, src IN
       SELECT schema, table_name, trigger_name, is_before, triggering_event,
              for_each_row, when_clause, referencing_names, trigger_body
@@ -1357,22 +1425,39 @@ CREATE FUNCTION db_migrate_views(
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
 $$DECLARE
-   extschema    name;
-   sch          name;
-   vname        name;
-   col          name;
-   src          text;
-   stmt         text;
-   separator    text;
-   errmsg       text;
-   detail       text;
-   old_msglevel text;
-   rc           integer := 0;
+   old_msglevel           text;
+   v_plugin_schema        name;
+   v_translate_identifier regproc;
+   extschema              name;
+   sch                    name;
+   vname                  name;
+   col                    name;
+   src                    text;
+   stmt                   text;
+   separator              text;
+   errmsg                 text;
+   detail                 text;
+   rc                     integer := 0;
 BEGIN
    /* remember old setting */
    old_msglevel := current_setting('client_min_messages');
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
+
+   /* get the plugin callback functions */
+   SELECT extnamespace::regnamespace::name INTO v_plugin_schema
+   FROM pg_extensions
+   WHERE extname = plugin;
+
+   IF NOT FOUND THEN
+      RAISE EXCEPTION 'extension "%" is not installed', plugin;
+   END IF;
+
+   EXECUTE format(
+              E'SELECT translate_identifier_fun\n'
+              'FROM %I.db_migrator_callback()',
+              v_plugin_schema
+           ) INTO v_translate_identifier;
 
    /* set "search_path" to the remote stage and the extension schema */
    SELECT extnamespace::regnamespace INTO extschema
@@ -1381,7 +1466,13 @@ BEGIN
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
    /* translate schema names to lower case */
-   only_schemas := array_agg(oracle_tolower(os)) FROM unnest(only_schemas) os;
+   EXECUTE format(
+              'SELECT array_agg(%s(os)) FROM unnest($1) AS os',
+              v_translate_identifier
+           )
+   INTO only_schemas
+   USING only_schemas;
+
    FOR sch, vname, src IN
       SELECT schema, view_name, definition
       FROM views
@@ -1456,40 +1547,57 @@ CREATE FUNCTION db_migrate_constraints(
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
 $$DECLARE
-   extschema    name;
-   stmt         text;
-   stmt_middle  text;
-   stmt_suffix  text;
-   separator    text;
-   old_s        name;
-   old_t        name;
-   old_c        name;
-   loc_s        name;
-   loc_t        name;
-   ind_name     name;
-   cons_name    name;
-   candefer     boolean;
-   is_deferred  boolean;
-   delrule      text;
-   colname      name;
-   colpos       integer;
-   rem_s        name;
-   rem_t        name;
-   rem_colname  name;
-   prim         boolean;
-   expr         text;
-   uniq         boolean;
-   des          boolean;
-   is_expr      boolean;
-   errmsg       text;
-   detail       text;
-   old_msglevel text;
-   rc           integer := 0;
+   old_msglevel           text;
+   v_plugin_schema        name;
+   v_translate_identifier regproc;
+   extschema              name;
+   stmt                   text;
+   stmt_middle            text;
+   stmt_suffix            text;
+   separator              text;
+   old_s                  name;
+   old_t                  name;
+   old_c                  name;
+   loc_s                  name;
+   loc_t                  name;
+   ind_name               name;
+   cons_name              name;
+   candefer               boolean;
+   is_deferred            boolean;
+   delrule                text;
+   colname                name;
+   colpos                 integer;
+   rem_s                  name;
+   rem_t                  name;
+   rem_colname            name;
+   prim                   boolean;
+   expr                   text;
+   uniq                   boolean;
+   des                    boolean;
+   is_expr                boolean;
+   errmsg                 text;
+   detail                 text;
+   rc                     integer := 0;
 BEGIN
    /* remember old setting */
    old_msglevel := current_setting('client_min_messages');
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
+
+   /* get the plugin callback functions */
+   SELECT extnamespace::regnamespace::name INTO v_plugin_schema
+   FROM pg_extensions
+   WHERE extname = plugin;
+
+   IF NOT FOUND THEN
+      RAISE EXCEPTION 'extension "%" is not installed', plugin;
+   END IF;
+
+   EXECUTE format(
+              E'SELECT translate_identifier_fun\n'
+              'FROM %I.db_migrator_callback()',
+              v_plugin_schema
+           ) INTO v_translate_identifier;
 
    /* set "search_path" to the PostgreSQL staging schema and the extension schema */
    SELECT extnamespace::regnamespace INTO extschema
@@ -1498,7 +1606,12 @@ BEGIN
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
    /* translate schema names to lower case */
-   only_schemas := array_agg(oracle_tolower(os)) FROM unnest(only_schemas) os;
+   EXECUTE format(
+              'SELECT array_agg(%s(os)) FROM unnest($1) AS os',
+              v_translate_identifier
+           )
+   INTO only_schemas
+   USING only_schemas;
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating UNIQUE and PRIMARY KEY constraints ...';
