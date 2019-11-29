@@ -119,7 +119,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::name INTO v_plugin_schema
-   FROM pg_extensions
+   FROM pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -502,7 +502,7 @@ BEGIN
    RETURN 0;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_refresh(name, name, name, name[], integer) IS
+COMMENT ON FUNCTION db_migrate_refresh(name, name, name, name[]) IS
   'update the PostgreSQL stage with values from the remote stage';
 
 CREATE FUNCTION db_migrate_prepare(
@@ -511,7 +511,7 @@ CREATE FUNCTION db_migrate_prepare(
    staging_schema name    DEFAULT NAME 'fdw_stage',
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL,
-   options        jsonb
+   options        jsonb   DEFAULT NULL
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
 $$DECLARE
@@ -525,7 +525,7 @@ $$DECLARE
 BEGIN
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::name INTO v_plugin_schema
-   FROM pg_extensions
+   FROM pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -587,8 +587,8 @@ BEGIN
 
    /* create the migration views in the remote staging schema */
    EXECUTE format('SET LOCAL search_path = %I', v_plugin_schema);
-   PERFORM format(
-              '%s($1, $2, $3)',
+   EXECUTE format(
+              'SELECT %s($1, $2, $3)',
               v_create_metadata_views
            ) USING
               server,
@@ -800,7 +800,7 @@ BEGIN
    RETURN db_migrate_refresh(plugin, staging_schema, pgstage_schema, only_schemas);
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_prepare(name, name, name, name[], integer) IS
+COMMENT ON FUNCTION db_migrate_prepare(name, name, name, name, name[], jsonb) IS
    'first step of "db_migrate": create and populate staging schemas';
 
 CREATE FUNCTION db_migrate_mkforeign(
@@ -809,7 +809,7 @@ CREATE FUNCTION db_migrate_mkforeign(
    staging_schema name    DEFAULT NAME 'fdw_stage',
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL,
-   options        jsonb
+   options        jsonb   DEFAULT NULL
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
 $$DECLARE
@@ -855,7 +855,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::name INTO v_plugin_schema
-   FROM pg_extensions
+   FROM pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -1108,7 +1108,7 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_mkforeign(name, name, name, name[], integer) IS
+COMMENT ON FUNCTION db_migrate_mkforeign(name, name, name, name, name[], jsonb) IS
    'second step of "db_migrate": create schemas, sequences and foreign tables';
 
 CREATE FUNCTION db_migrate_tables(
@@ -1134,7 +1134,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::name INTO v_plugin_schema
-   FROM pg_extensions
+   FROM pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -1213,7 +1213,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::name INTO v_plugin_schema
-   FROM pg_extensions
+   FROM pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -1322,7 +1322,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::name INTO v_plugin_schema
-   FROM pg_extensions
+   FROM pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -1446,7 +1446,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::name INTO v_plugin_schema
-   FROM pg_extensions
+   FROM pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -1586,7 +1586,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::name INTO v_plugin_schema
-   FROM pg_extensions
+   FROM pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -2074,7 +2074,7 @@ CREATE FUNCTION db_migrate(
    staging_schema name    DEFAULT NAME 'fdw_stage',
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL,
-   options        jsonb,
+   options        jsonb   DEFAULT NULL,
    with_data      boolean DEFAULT TRUE
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
