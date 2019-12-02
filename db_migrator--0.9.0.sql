@@ -151,7 +151,11 @@ BEGIN
       WHERE only_schemas IS NULL
          OR schema =ANY (only_schemas);
 
-   /* set "search_path" to the PostgreSQL stage */
+   /* set "search_path" to the PostgreSQL stage, and extension schema */
+   SELECT extnamespace::regnamespace::name INTO extschema
+   FROM pg_extension
+   WHERE extname = 'db_migrator';
+
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
    /* loop through foreign columns and translate them to PostgreSQL columns */
@@ -205,14 +209,14 @@ BEGIN
             expr
          )
          ON CONFLICT ON CONSTRAINT columns_pkey DO UPDATE SET
-            orig_name = EXCLUDED.orig_column,
+            orig_column = EXCLUDED.orig_column,
             orig_type = EXCLUDED.orig_type;
    END LOOP;
 
    CLOSE c_col;
 
    /* copy "tables" table */
-   EXECUTE format(E'INSERT INTO tables (schema, orig_schema, table_name, orig_name)\n'
+   EXECUTE format(E'INSERT INTO tables (schema, orig_schema, table_name, orig_table)\n'
                    '   SELECT %s(schema),\n'
                    '          schema,\n'
                    '          %s(table_name),\n'
@@ -221,7 +225,7 @@ BEGIN
                    '   WHERE $1 IS NULL OR schema =ANY ($1)\n'
                    'ON CONFLICT ON CONSTRAINT tables_pkey DO UPDATE SET\n'
                    '   orig_schema = EXCLUDED.orig_schema,\n'
-                   '   orig_name   = EXCLUDED.orig_name',
+                   '   orig_table   = EXCLUDED.orig_table',
                   v_translate_identifier,
                   v_translate_identifier,
                   staging_schema)
@@ -603,7 +607,7 @@ BEGIN
       schema        name         NOT NULL,
       table_name    name         NOT NULL,
       column_name   name         NOT NULL,
-      orig_name     varchar(128) NOT NULL,
+      orig_column   varchar(128) NOT NULL,
       position      integer      NOT NULL,
       type_name     name         NOT NULL,
       orig_type     text         NOT NULL,
@@ -619,7 +623,7 @@ BEGIN
       schema        name         NOT NULL,
       orig_schema   varchar(128) NOT NULL,
       table_name    name         NOT NULL,
-      orig_name     varchar(128) NOT NULL,
+      orig_table    varchar(128) NOT NULL,
       migrate       boolean      NOT NULL DEFAULT TRUE,
       CONSTRAINT tables_pkey
          PRIMARY KEY (schema, table_name)
@@ -817,6 +821,7 @@ $$DECLARE
    v_plugin_schema         name;
    v_translate_identifier  regproc;
    v_create_foreign_tab    regproc;
+   stmt                    text;
    s                       name;
    t                       name;
    sch                     name;
@@ -992,7 +997,7 @@ BEGIN
           '       pc.type_name,\n'
           '       pc.nullable,\n'
           '       pt.orig_schema,\n'
-          '       pt.orig_name\n'
+          '       pt.orig_table\n'
           'FROM columns pc\n'
           '   JOIN tables pt\n'
           '      USING (schema, table_name)\n'
@@ -1002,14 +1007,16 @@ BEGIN
    LOOP
       IF o_sch <> sch OR o_tab <> tab THEN
          IF o_tab <> '' THEN
+            /* get the CREATE FOREIGN TABLE statement */
+            EXECUTE format(
+               'SELECT %s($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+               v_create_foreign_tab
+            ) INTO stmt
+            USING server, o_sch, o_tab, o_fsch, o_ftab,
+                  col_array, fcol_array, type_array, null_array, options;
+            /* execute the statement and log errors */
             BEGIN
-               /* create the foreign table */
-               EXECUTE format(
-                          'SELECT %s($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-                          v_create_foreign_tab
-                       )
-               USING server, o_sch, o_tab, o_fsch, o_ftab,
-                     col_array, fcol_array, type_array, null_array, options;
+               EXECUTE stmt;
             EXCEPTION
                WHEN others THEN
                   /* turn the error into a warning */
@@ -1033,9 +1040,7 @@ BEGIN
                         pgstage_schema,
                         sch,
                         tab,
-                        stmt || format(E') SERVER %I\n'
-                                       '   OPTIONS (schema ''%s'', table ''%s'', readonly ''true'', max_long ''%s'')',
-                                       server, o_fsch, o_ftab, max_long),
+                        stmt,
                         errmsg || coalesce(': ' || detail, '')
                      );
 
@@ -1061,14 +1066,16 @@ BEGIN
 
    /* last foreign table */
    IF o_tab <> '' THEN
+      /* get the CREATE FOREIGN TABLE statement */
+      EXECUTE format(
+         'SELECT %s($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+         v_create_foreign_tab
+      ) INTO stmt
+      USING server, o_sch, o_tab, o_fsch, o_ftab,
+            col_array, fcol_array, type_array, null_array, options;
+      /* execute the statement and log errors */
       BEGIN
-         /* create the foreign table */
-         EXECUTE format(
-                    'SELECT %s($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-                    v_create_foreign_tab
-                 )
-         USING server, o_sch, o_tab, o_fsch, o_ftab,
-               col_array, fcol_array, type_array, null_array, options;
+         EXECUTE stmt;
       EXCEPTION
          WHEN others THEN
             /* turn the error into a warning */
@@ -1092,9 +1099,7 @@ BEGIN
                   pgstage_schema,
                   sch,
                   tab,
-                  stmt || format(E') SERVER %I\n'
-                                 '   OPTIONS (schema ''%s'', table ''%s'', readonly ''true'', max_long ''%s'')',
-                                 server, o_fsch, o_ftab, max_long),
+                  stmt,
                   errmsg || coalesce(': ' || detail, '')
                );
 
@@ -1112,6 +1117,7 @@ COMMENT ON FUNCTION db_migrate_mkforeign(name, name, name, name, name[], jsonb) 
    'second step of "db_migrate": create schemas, sequences and foreign tables';
 
 CREATE FUNCTION db_migrate_tables(
+   plugin         name,
    staging_schema name    DEFAULT NAME 'fdw_stage',
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL,
@@ -1186,10 +1192,11 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_tables(name, name, name[], boolean) IS
+COMMENT ON FUNCTION db_migrate_tables(name,name,name,name[],boolean) IS
    'third step of "db_migrate": copy table data from the remote database';
 
 CREATE FUNCTION db_migrate_functions(
+   plugin         name,
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL
 ) RETURNS integer
@@ -1289,10 +1296,11 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_functions(name, name[]) IS
+COMMENT ON FUNCTION db_migrate_functions(name,name,name[]) IS
    'fourth step of "db_migrate": create functions';
 
 CREATE FUNCTION db_migrate_triggers(
+   plugin         name,
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL
 ) RETURNS integer
@@ -1416,10 +1424,11 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_triggers(name, name[]) IS
+COMMENT ON FUNCTION db_migrate_triggers(name,name,name[]) IS
    'fifth step of "db_migrate": create triggers';
 
 CREATE FUNCTION db_migrate_views(
+   plugin         name,
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL
 ) RETURNS integer
@@ -1538,10 +1547,11 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_views(name, name[]) IS
+COMMENT ON FUNCTION db_migrate_views(name,name,name[]) IS
    'sixth step of "db_migrate": create views';
 
 CREATE FUNCTION db_migrate_constraints(
+   plugin         name,
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL
 ) RETURNS integer
@@ -2038,7 +2048,7 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_constraints(name, name[])
+COMMENT ON FUNCTION db_migrate_constraints(name,name,name[])
    IS 'seventh step of "db_migrate": create constraints and indexes';
 
 CREATE FUNCTION db_migrate_finish(
@@ -2065,7 +2075,7 @@ BEGIN
    RETURN 0;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_finish(name, name) IS
+COMMENT ON FUNCTION db_migrate_finish(name,name) IS
    'final step of "db_migrate": drop staging schemas';
 
 CREATE FUNCTION db_migrate(
@@ -2104,31 +2114,31 @@ BEGIN
     * Third step:
     * Copy the tables data from the remote database.
     */
-   rc := rc + db_migrate_tables(staging_schema, pgstage_schema, only_schemas, with_data);
+   rc := rc + db_migrate_tables(plugin, staging_schema, pgstage_schema, only_schemas, with_data);
 
    /*
     * Fourth step:
     * Create functions (this won't do anything since they have "migrate = FALSE").
     */
-   rc := rc + db_migrate_functions(pgstage_schema, only_schemas);
+   rc := rc + db_migrate_functions(plugin, pgstage_schema, only_schemas);
 
    /*
     * Fifth step:
     * Create triggers (this won't do anything since they have "migrate = FALSE").
     */
-   rc := rc + db_migrate_triggers(pgstage_schema, only_schemas);
+   rc := rc + db_migrate_triggers(plugin, pgstage_schema, only_schemas);
 
    /*
     * Sixth step:
     * Create views.
     */
-   rc := rc + db_migrate_views(pgstage_schema, only_schemas);
+   rc := rc + db_migrate_views(plugin, pgstage_schema, only_schemas);
 
    /*
     * Seventh step:
     * Create constraints and indexes.
     */
-   rc := rc + db_migrate_constraints(pgstage_schema, only_schemas);
+   rc := rc + db_migrate_constraints(plugin, pgstage_schema, only_schemas);
 
    /*
     * Final step:
