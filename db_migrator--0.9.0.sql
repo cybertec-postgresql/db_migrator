@@ -94,9 +94,9 @@ $$DECLARE
    v_trans_schema          name;
    v_trans_table           name;
    v_trans_column          name;
-   v_schema                varchar(128);
-   v_table                 varchar(128);
-   v_column                varchar(128);
+   v_schema                text;
+   v_table                 text;
+   v_column                text;
    v_pos                   integer;
    v_type                  text;
    v_length                integer;
@@ -603,30 +603,37 @@ BEGIN
    EXECUTE format('SET LOCAL search_path = %I, %I, %I', pgstage_schema, staging_schema, extschema);
 
    /* create tables in the PostgreSQL stage */
+   CREATE TABLE schemas (
+      schema name NOT NULL
+         CONSTRAINT schemas_pkey PRIMARY KEY
+   );
+
+   CREATE TABLE tables (
+      schema        name    NOT NULL REFERENCES schemas,
+      orig_schema   text    NOT NULL,
+      table_name    name    NOT NULL,
+      orig_table    text    NOT NULL,
+      migrate       boolean NOT NULL DEFAULT TRUE,
+      CONSTRAINT tables_pkey
+         PRIMARY KEY (schema, table_name)
+   );
+
    CREATE TABLE columns(
-      schema        name         NOT NULL,
-      table_name    name         NOT NULL,
-      column_name   name         NOT NULL,
-      orig_column   varchar(128) NOT NULL,
-      position      integer      NOT NULL,
-      type_name     name         NOT NULL,
-      orig_type     text         NOT NULL,
-      nullable      boolean      NOT NULL,
+      schema        name    NOT NULL,
+      table_name    name    NOT NULL,
+      column_name   name    NOT NULL,
+      orig_column   text    NOT NULL,
+      position      integer NOT NULL,
+      type_name     text    NOT NULL,
+      orig_type     text    NOT NULL,
+      nullable      boolean NOT NULL,
       default_value text,
       CONSTRAINT columns_pkey
          PRIMARY KEY (schema, table_name, column_name),
       CONSTRAINT columns_unique
-         UNIQUE (schema, table_name, column_name, position)
-   );
-
-   CREATE TABLE tables (
-      schema        name         NOT NULL,
-      orig_schema   varchar(128) NOT NULL,
-      table_name    name         NOT NULL,
-      orig_table    varchar(128) NOT NULL,
-      migrate       boolean      NOT NULL DEFAULT TRUE,
-      CONSTRAINT tables_pkey
-         PRIMARY KEY (schema, table_name)
+         UNIQUE (position),
+      CONSTRAINT columns_fkey
+         FOREIGN KEY (schema, table_name) REFERENCES tables
    );
 
    CREATE TABLE checks (
@@ -638,7 +645,9 @@ BEGIN
       condition       text    NOT NULL,
       migrate         boolean NOT NULL DEFAULT TRUE,
       CONSTRAINT checks_pkey
-         PRIMARY KEY (schema, table_name, constraint_name)
+         PRIMARY KEY (schema, table_name, constraint_name),
+      CONSTRAINT checks_fkey
+         FOREIGN KEY (schema, table_name) REFERENCES tables
    );
 
    CREATE TABLE foreign_keys (
@@ -655,7 +664,11 @@ BEGIN
       remote_column   name    NOT NULL,
       migrate         boolean NOT NULL DEFAULT TRUE,
       CONSTRAINT foreign_keys_pkey
-         PRIMARY KEY (schema, table_name, constraint_name, position)
+         PRIMARY KEY (schema, table_name, constraint_name, position),
+      CONSTRAINT foreign_keys_fkey
+         FOREIGN KEY (schema, table_name) REFERENCES tables,
+      CONSTRAINT foreign_keys_remote_fkey
+         FOREIGN KEY (remote_schema, remote_table) REFERENCES tables
    );
 
    CREATE TABLE keys (
@@ -669,11 +682,13 @@ BEGIN
       is_primary      boolean NOT NULL,
       migrate         boolean NOT NULL DEFAULT TRUE,
       CONSTRAINT keys_pkey
-         PRIMARY KEY (schema, table_name, constraint_name, position)
+         PRIMARY KEY (schema, table_name, constraint_name, position),
+      CONSTRAINT keys_fkey
+         FOREIGN KEY (schema, table_name, column_name) REFERENCES columns
    );
 
    CREATE TABLE views (
-      schema     name    NOT NULL,
+      schema     name    NOT NULL REFERENCES schemas,
       view_name  name    NOT NULL,
       definition text    NOT NULL,
       orig_def   text    NOT NULL,
@@ -684,7 +699,7 @@ BEGIN
    );
 
    CREATE TABLE functions (
-      schema         name    NOT NULL,
+      schema         name    NOT NULL REFERENCES schemas,
       function_name  name    NOT NULL,
       is_procedure   boolean NOT NULL,
       source         text    NOT NULL,
@@ -696,7 +711,7 @@ BEGIN
    );
 
    CREATE TABLE sequences (
-      schema        name    NOT NULL,
+      schema        name    NOT NULL REFERENCES schemas,
       sequence_name name    NOT NULL,
       min_value     bigint,
       max_value     bigint,
@@ -732,30 +747,25 @@ BEGIN
          PRIMARY KEY (schema, index_name)
    );
 
-   CREATE TABLE schemas (
-      schema name NOT NULL
-         CONSTRAINT schemas_pkey PRIMARY KEY
-   );
-
    CREATE TABLE triggers (
-      schema            name         NOT NULL,
-      table_name        name         NOT NULL,
-      trigger_name      name         NOT NULL,
-      is_before         boolean      NOT NULL,
-      triggering_event  varchar(227) NOT NULL,
-      for_each_row      boolean      NOT NULL,
+      schema            name    NOT NULL,
+      table_name        name    NOT NULL,
+      trigger_name      name    NOT NULL,
+      is_before         boolean NOT NULL,
+      triggering_event  text    NOT NULL,
+      for_each_row      boolean NOT NULL,
       when_clause       text,
-      referencing_names name         NOT NULL,
-      trigger_body      text         NOT NULL,
-      orig_source       text         NOT NULL,
-      migrate           boolean      NOT NULL DEFAULT FALSE,
-      verified          boolean      NOT NULL DEFAULT FALSE,
+      referencing_names name    NOT NULL,
+      trigger_body      text    NOT NULL,
+      orig_source       text    NOT NULL,
+      migrate           boolean NOT NULL DEFAULT FALSE,
+      verified          boolean NOT NULL DEFAULT FALSE,
       CONSTRAINT triggers_pkey
          PRIMARY KEY (schema, table_name, trigger_name)
    );
 
    CREATE TABLE packages (
-      schema       name    NOT NULL,
+      schema       name    NOT NULL REFERENCES schemas,
       package_name name    NOT NULL,
       is_body      boolean NOT NULL,
       source       text    NOT NULL,
@@ -764,24 +774,24 @@ BEGIN
    );
 
    CREATE TABLE table_privs (
-      schema     name        NOT NULL,
-      table_name name        NOT NULL,
-      privilege  varchar(40) NOT NULL,
-      grantor    name        NOT NULL,
-      grantee    name        NOT NULL,
-      grantable  boolean     NOT NULL,
+      schema     name    NOT NULL,
+      table_name name    NOT NULL,
+      privilege  text    NOT NULL,
+      grantor    name    NOT NULL,
+      grantee    name    NOT NULL,
+      grantable  boolean NOT NULL,
       CONSTRAINT table_privs_pkey
          PRIMARY KEY (schema, table_name, grantee, privilege, grantor)
    );
 
    CREATE TABLE column_privs (
-      schema      name        NOT NULL,
-      table_name  name        NOT NULL,
-      column_name name        NOT NULL,
-      privilege   varchar(40) NOT NULL,
-      grantor     name        NOT NULL,
-      grantee     name        NOT NULL,
-      grantable   boolean     NOT NULL,
+      schema      name    NOT NULL,
+      table_name  name    NOT NULL,
+      column_name name    NOT NULL,
+      privilege   text    NOT NULL,
+      grantor     name    NOT NULL,
+      grantee     name    NOT NULL,
+      grantable   boolean NOT NULL,
       CONSTRAINT column_privs_pkey
          PRIMARY KEY (schema, table_name, column_name, grantee, privilege)
    );
