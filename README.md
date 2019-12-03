@@ -124,11 +124,11 @@ are done with the migration.
 
 - `schema` (type `name`): name of the schema
 
+- `orig_schema` (type `text`): schema name as used in the remote data source
+
 ### `tables` ###
 
 - `schema` (type `name`): schema of the table
-
-- `orig_schema` (type `text`): schema name as used in the remote data source
 
 - `table_name` (type `name`): name of the table
 
@@ -198,7 +198,7 @@ are done with the migration.
 
 - `constraint_name` (type `name`): name of the constraint (will not be migrated)
 
-- `"deferrable"` (type `boolean`): `TRUE` if the constraint can be deferred
+- `deferrable` (type `boolean`): `TRUE` if the constraint can be deferred
 
   Modify this column if desired.
 
@@ -215,6 +215,64 @@ are done with the migration.
 - `migrate` (type `boolean`): `TRUE` if the constraint should be migrated
 
   Modify this column if desired.
+
+### `indexes` ###
+
+- `schema` (type `name`): schema of the table with the index
+
+- `table_name` (type `name`): table with the index
+
+- `index_name` (type `name`): name of the index (will not be migrated)
+
+- `uniqueness` (type `boolean`): `TRUE` if this is a unique index
+
+  Modify this column if desired.
+
+- `migrate` (type `boolean`): `TRUE` if the constraint should be migrated
+
+  Modify this column if desired.
+
+### `index_columns` ###
+
+- `schema` (type `name`): schema of the table with the index
+
+- `table_name` (type `name`): table with the index
+
+- `index_name` (type `name`): name of the index (will not be migrated)
+
+- `position` (type `integer`): determines the index column order
+
+- `descend` (type `boolean`): `TRUE` if the index column is sorted `DESC`
+
+  Modify this column if desired.
+
+- `is_expression` (type `boolean`): `TRUE` if the index column is an
+  expression rather than a column name
+
+- `column_name` (type `text`): name of the column or indexed expression
+  (expressions usually must be surounded with parentheses)
+
+  Modify this column if desired.
+
+### `views` ###
+
+- `schema` (type `name`): schema of the table with the view
+
+- `view_name` (type `name`): name of the view
+
+- `definition` (type `text`): SQL statement defining the view
+
+  Modify this column if desired.
+
+- `orig_def` (type `text`): view definition on the remote data source
+
+- `migrate` (type `boolean`): `TRUE` if the constraint should be migrated
+
+  Modify this column if desired.
+
+- `verified` (type `boolean`): can be used however you want
+
+  This may be useful to store if the view has been translated successfully.
 
 Usage
 =====

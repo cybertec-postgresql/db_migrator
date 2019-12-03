@@ -604,13 +604,13 @@ BEGIN
 
    /* create tables in the PostgreSQL stage */
    CREATE TABLE schemas (
-      schema name NOT NULL
+      schema      name NOT NULL,
+      orig_schema text NOT NULL,
          CONSTRAINT schemas_pkey PRIMARY KEY
    );
 
    CREATE TABLE tables (
       schema        name    NOT NULL REFERENCES schemas,
-      orig_schema   text    NOT NULL,
       table_name    name    NOT NULL,
       orig_table    text    NOT NULL,
       migrate       boolean NOT NULL DEFAULT TRUE,
@@ -631,7 +631,7 @@ BEGIN
       CONSTRAINT columns_pkey
          PRIMARY KEY (schema, table_name, column_name),
       CONSTRAINT columns_unique
-         UNIQUE (position),
+         UNIQUE (schema, table_name, position),
       CONSTRAINT columns_fkey
          FOREIGN KEY (schema, table_name) REFERENCES tables
    );
@@ -724,19 +724,6 @@ BEGIN
          PRIMARY KEY (schema, sequence_name)
    );
 
-   CREATE TABLE index_columns (
-      schema        name NOT NULL,
-      table_name    name NOT NULL,
-      index_name    name NOT NULL,
-      uniqueness    boolean NOT NULL,
-      position      integer NOT NULL,
-      descend       boolean NOT NULL,
-      is_expression boolean NOT NULL,
-      column_name   text    NOT NULL,
-      CONSTRAINT index_columns_pkey
-         PRIMARY KEY (schema, index_name, position)
-   );
-
    CREATE TABLE indexes (
       schema     name    NOT NULL,
       table_name name    NOT NULL,
@@ -744,7 +731,25 @@ BEGIN
       uniqueness boolean NOT NULL,
       migrate    boolean NOT NULL DEFAULT TRUE,
       CONSTRAINT indexes_pkey
-         PRIMARY KEY (schema, index_name)
+         PRIMARY KEY (schema, index_name),
+      CONSTRAINT indexes_fkey
+         FOREIGN KEY (schema, table_name) REFERENCES tables
+   );
+
+   CREATE TABLE index_columns (
+      schema        name NOT NULL,
+      table_name    name NOT NULL,
+      index_name    name NOT NULL,
+      position      integer NOT NULL,
+      descend       boolean NOT NULL,
+      is_expression boolean NOT NULL,
+      column_name   text    NOT NULL,
+      CONSTRAINT index_columns_pkey
+         PRIMARY KEY (schema, index_name, position),
+      CONSTRAINT index_columns_table_fkey
+         FOREIGN KEY (schema, table_name) REFERENCES tables,
+      CONSTRAINT index_columns_index_fkey
+         FOREIGN KEY (schema, index_name) REFERENCES indexes
    );
 
    CREATE TABLE triggers (
