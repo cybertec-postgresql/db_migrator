@@ -13,8 +13,8 @@ $$SELECT CASE WHEN $1 < -9223372036854775808
          END$$;
 
 CREATE FUNCTION materialize_foreign_table(
-   s name,
-   t name,
+   schema name,
+   table_name name,
    with_data boolean DEFAULT TRUE,
    pgstage_schema name DEFAULT NAME 'pgsql_stage'
 ) RETURNS boolean
@@ -26,19 +26,19 @@ $$DECLARE
 BEGIN
    BEGIN
       /* rename the foreign table */
-      ft := t || E'\x07';
-      EXECUTE format('ALTER FOREIGN TABLE %I.%I RENAME TO %I', s, t, ft);
+      ft := table_name || E'\x07';
+      EXECUTE format('ALTER FOREIGN TABLE %I.%I RENAME TO %I', schema, table_name, ft);
 
       /* create a table */
-      EXECUTE format('CREATE TABLE %I.%I (LIKE %I.%I)', s, t, s, ft);
+      EXECUTE format('CREATE TABLE %I.%I (LIKE %I.%I)', schema, table_name, schema, ft);
 
       /* move the data if desired */
       IF with_data THEN
-         EXECUTE format('INSERT INTO %I.%I SELECT * FROM %I.%I', s, t, s, ft);
+         EXECUTE format('INSERT INTO %I.%I SELECT * FROM %I.%I', schema, table_name, schema, ft);
       END IF;
 
       /* drop the foreign table */
-      EXECUTE format('DROP FOREIGN TABLE %I.%I', s, ft);
+      EXECUTE format('DROP FOREIGN TABLE %I.%I', schema, ft);
 
       RETURN TRUE;
    EXCEPTION
@@ -47,7 +47,7 @@ BEGIN
          GET STACKED DIAGNOSTICS
             errmsg := MESSAGE_TEXT,
             detail := PG_EXCEPTION_DETAIL;
-         RAISE WARNING 'Error loading table data for %.%', s, t
+         RAISE WARNING 'Error loading table data for %.%', schema, table_name
             USING DETAIL = errmsg || coalesce(': ' || detail, '');
 
          EXECUTE
@@ -62,9 +62,9 @@ BEGIN
                '   %L\n'
                ')',
                pgstage_schema,
-               s,
-               t,
-               format('INSERT INTO %I.%I SELECT * FROM %I.%I', s, t, s, ft),
+               schema,
+               table_name,
+               format('INSERT INTO %I.%I SELECT * FROM %I.%I', schema, table_name, schema, ft),
                errmsg || coalesce(': ' || detail, '')
             );
    END;
@@ -443,21 +443,6 @@ BEGIN
                   staging_schema)
       USING only_schemas;
 
-   /* copy "packages" view */
-   EXECUTE format(E'INSERT INTO packages (schema, package_name, is_body, source)\n'
-                   '   SELECT %s(schema),\n'
-                   '          %s(package_name),\n'
-                   '          is_body,\n'
-                   '          source\n'
-                   '   FROM %I.packages\n'
-                   '   WHERE $1 IS NULL OR schema =ANY ($1)\n'
-                   'ON CONFLICT ON CONSTRAINT packages_pkey DO UPDATE SET\n'
-                   '   source  = EXCLUDED.source',
-                  v_translate_identifier,
-                  v_translate_identifier,
-                  staging_schema)
-      USING only_schemas;
-
    /* copy "table_privs" table */
    EXECUTE format(E'INSERT INTO table_privs (schema, table_name, privilege, grantor, grantee, grantable)\n'
                    '   SELECT %s(schema),\n'
@@ -733,7 +718,9 @@ BEGIN
       CONSTRAINT indexes_pkey
          PRIMARY KEY (schema, index_name),
       CONSTRAINT indexes_fkey
-         FOREIGN KEY (schema, table_name) REFERENCES tables
+         FOREIGN KEY (schema, table_name) REFERENCES tables,
+      CONSTRAINT indexes_unique
+         UNIQUE (schema, table_name, index_name)
    );
 
    CREATE TABLE index_columns (
@@ -746,10 +733,9 @@ BEGIN
       column_name   text    NOT NULL,
       CONSTRAINT index_columns_pkey
          PRIMARY KEY (schema, index_name, position),
-      CONSTRAINT index_columns_table_fkey
-         FOREIGN KEY (schema, table_name) REFERENCES tables,
-      CONSTRAINT index_columns_index_fkey
-         FOREIGN KEY (schema, index_name) REFERENCES indexes
+      CONSTRAINT index_columns_fkey
+         FOREIGN KEY (schema, table_name, index_name)
+            REFERENCES indexes (schema, table_name, index_name)
    );
 
    CREATE TABLE triggers (
@@ -766,16 +752,9 @@ BEGIN
       migrate           boolean NOT NULL DEFAULT FALSE,
       verified          boolean NOT NULL DEFAULT FALSE,
       CONSTRAINT triggers_pkey
-         PRIMARY KEY (schema, table_name, trigger_name)
-   );
-
-   CREATE TABLE packages (
-      schema       name    NOT NULL REFERENCES schemas,
-      package_name name    NOT NULL,
-      is_body      boolean NOT NULL,
-      source       text    NOT NULL,
-      CONSTRAINT packages_pkey
-         PRIMARY KEY (schema, package_name, is_body)
+         PRIMARY KEY (schema, table_name, trigger_name),
+      CONSTRAINT triggers_fkey
+         FOREIGN KEY (schema, table_name) REFERENCES tables
    );
 
    CREATE TABLE table_privs (
@@ -786,7 +765,9 @@ BEGIN
       grantee    name    NOT NULL,
       grantable  boolean NOT NULL,
       CONSTRAINT table_privs_pkey
-         PRIMARY KEY (schema, table_name, grantee, privilege, grantor)
+         PRIMARY KEY (schema, table_name, grantee, privilege, grantor),
+      CONSTRAINT table_privs_fkey
+         FOREIGN KEY (schema, table_name) REFERENCES tables
    );
 
    CREATE TABLE column_privs (
@@ -798,7 +779,9 @@ BEGIN
       grantee     name    NOT NULL,
       grantable   boolean NOT NULL,
       CONSTRAINT column_privs_pkey
-         PRIMARY KEY (schema, table_name, column_name, grantee, privilege)
+         PRIMARY KEY (schema, table_name, column_name, grantee, privilege),
+      CONSTRAINT column_privs_fkey
+         FOREIGN KEY (schema, table_name, column_name) REFERENCES columns
    );
 
    /* table to record errors during migration */
@@ -1133,7 +1116,6 @@ COMMENT ON FUNCTION db_migrate_mkforeign(name, name, name, name, name[], jsonb) 
 
 CREATE FUNCTION db_migrate_tables(
    plugin         name,
-   staging_schema name    DEFAULT NAME 'fdw_stage',
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    only_schemas   name[]  DEFAULT NULL,
    with_data      boolean DEFAULT TRUE
@@ -1207,7 +1189,7 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_tables(name,name,name,name[],boolean) IS
+COMMENT ON FUNCTION db_migrate_tables(name,name,name[],boolean) IS
    'third step of "db_migrate": copy table data from the remote database';
 
 CREATE FUNCTION db_migrate_functions(
@@ -2129,7 +2111,7 @@ BEGIN
     * Third step:
     * Copy the tables data from the remote database.
     */
-   rc := rc + db_migrate_tables(plugin, staging_schema, pgstage_schema, only_schemas, with_data);
+   rc := rc + db_migrate_tables(plugin, pgstage_schema, only_schemas, with_data);
 
    /*
     * Fourth step:

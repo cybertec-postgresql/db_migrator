@@ -31,6 +31,15 @@ Setup
 Prerequisites
 -------------
 
+### Permissions ###
+
+You need a database user with the `CREATE` privilege on the current database
+who has `USAGE` privilege on the schemas where the extensions are installed
+and `EXECUTE` privileges on all required migration functions (the latter are
+usually granted by default).
+
+The permissions can be reduced once the migration is complete.
+
 ### Foreign Data Wrapper ###
 
 You need to install the foreign data wrapper for the data source from which
@@ -40,20 +49,17 @@ in the PostgreSQL Wiki.
 
  [fdw-list]: https://wiki.postgresql.org/wiki/Fdw
 
+You need to define these objects:
+
+- a foreign server that describes how to connect to the remote data source
+
+- a user mapping for the server to provide credentials for the migration user
+
 ### `db_migrator` plugin ###
 
 You also need to install the `db_migrator` plugin for the data source from
 which you want to migrate.  Again, follow the installation instructions provided
 with the software.
-
-### Permissions ###
-
-You need a database user with the `CREATE` privilege on the current database
-who has `USAGE` privilege on the schemas where the extensions are installed
-and `EXECUTE` privileges on all required migration functions (the latter are
-usually granted by default).
-
-The permissions can be reduced once the migration is complete.
 
 Installation
 ------------
@@ -274,6 +280,132 @@ are done with the migration.
 
   This may be useful to store if the view has been translated successfully.
 
+### `sequences` ###
+
+- `schema` (type `name`): schema of the sequence
+
+- `sequence_name` (type `name`): name of the sequence
+
+- `min_value` (type `bigint`): minimal value for the generated value
+
+  Modify this column if desired.
+
+- `max_value` (type `bigint`): maximal value for the generated value
+
+  Modify this column if desired.
+
+- `increment_by` (type `bigint`): difference between generated values
+
+  Modify this column if desired.
+
+- `cyclical` (type `boolean`): `TRUE` if the sequence "wraps around"
+
+  Modify this column if desired.
+
+- `cache_size` (type `integer`): number of sequence values cached on the
+  client side
+
+  Modify this column if desired.
+
+- `last_value` (type `bigint`): current position of the sequence
+
+  Modify this column if desired.
+
+- `orig_value` (type `bigint`): current position on the remote data source
+
+### `functions` (functions and procedures) ###
+
+- `schema` (type `name`): schema of the function or procedure
+
+- `function_name` (type `name`): name of the function or procedure
+
+- `is_procedure` (type `boolean`): `TRUE` if it is a procedure
+
+  Modify this column if desired.
+
+- `source` (type `text`): source code of the function or procedure
+
+  Modify this column if desired.
+
+- `orig_source` (type `text`): source code on the remote data source
+
+- `migrate` (type `boolean`): `TRUE` is the object should be migrated
+
+  Modify this column if desired.
+
+- `verified` (type `boolean`): can be used however you want
+
+  This may be useful to store if the source code has been translated
+  successfully.
+
+### `triggers` ###
+
+- `schema` (type `name`): schema of the table with the trigger
+
+- `table_name` (type `name`): name of the table with the trigger
+
+- `trigger_name` (type `name`): name of the trigger
+
+- `is_before` (type `boolean`): `TRUE` if it is a `BEFORE` trigger
+
+- `triggering_event` (type `text`): `INSERT`, `UPDATE`, `DELETE`
+  or `TRUNCATE` (if more than one, combine with `OR`)
+
+- `for_each_row` (type `boolean`): `TRUE` if the trigger is executed
+  for each modified row rather than once per triggering statement
+
+- `when_clause` (type `text`): condition for the trigger execution
+
+- `referencing_names` (type `name`): the `REFERENCING` clause for the
+  `CREATE TRIGGER` statement
+
+- `trigger_body` (type `text`): the function body for the trigger
+
+- `orig_source` (type `text`): the trigger source code on the remote data source
+
+- `migrate` (type `boolean`): `TRUE` if the trigger should be migrated
+
+- `verified` (type `boolean`): can be used however you want
+
+  This may be useful to store if the trigger has been translated successfully.
+
+### `table_privs` (permissions on tables) ##ä
+
+These are not migrated by `db_migrator`, but can be used by the migration script
+to migrate permissions.
+
+- `schema` (type `name`): schema of the table with the privilege
+
+- `table_name` (type `name`): name of the table with the privilege
+
+- `privilege` (type `text`): name of the privilege
+
+- `grantor` (type `name`): user who granted the privilege
+
+- `grantee` (type `name`): user who receives the permission
+
+- `grantable` (type `boolean`): `TRUE` if the grantee can grant the privilege
+  to others
+
+### `column_privs` (permissions on table columns) ###
+
+These are not migrated by `db_migrator`, but can be used by the migration script
+to migrate permissions.
+
+- `schema` (type `name`):
+
+- `table_name` (type `name`):
+
+- `column_name` (type `name`):
+
+- `privilege` (type `text`):
+
+- `grantor` (type `name`):
+
+- `grantee` (type `name`):
+
+- `grantable` (type `boolean`):
+
 Usage
 =====
 
@@ -332,6 +464,129 @@ of the migration.
 
 Detailed description of the migration functions
 -----------------------------------------------
+
+### `db_migrate_prepare` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `server` (type `name`, required): name of the foreign server that describes
+  the data source from which to migrate
+
+- `staging_schema` (type `name`, default `fdw_stage`): name of the remote
+  staging schema
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+- `only_schemas` (type `name[]`, default all schemas): list of schemas to
+  migrate
+
+  These must be written exactly like they are on the remote data source.
+
+- `options` (type `jsonb`, optional): options to pass to the plugin
+
+  Consult the documentation of the plugin for available options.
+
+This function must be called first.  It creates the staging schemas.
+The remote staging schema is populated by the plugin.  `db_migrate_refresh`
+is called to create a snapshot of the remote stage in the Postgres stage.
+
+### `db_migrate_refresh` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `staging_schema` (type `name`, default `fdw_stage`): name of the remote
+  staging schema
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+- `only_schemas` (type `name[]`, default all schemas): list of schemas to
+  migrate
+
+You can call this function to refresh the Postgres stage with a new
+snapshot of the remote stage.  This will work as long as no objects on the
+remote data source are renamed or deleted (adding tables and columns will
+work fine).  Edits made to the Postgres stage will be preserved.
+
+### `db_migrate_mkforeign` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `server` (type `name`, required): name of the foreign server that describes
+  the data source from which to migrate
+
+- `staging_schema` (type `name`, default `fdw_stage`): name of the remote
+  staging schema
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+- `only_schemas` (type `name[]`, default all schemas): list of schemas to
+  migrate
+
+  These must be written exactly like they are on the remote data source.
+
+- `options` (type `jsonb`, optional): options to pass to the plugin
+
+  Consult the documentation of the plugin for available options.
+
+Call this function once you have edited the Postgres stage to your satisfaction.
+It will create all schemas that should be migrated and foreign tables for
+all remote tables you want to migrate.
+
+### `db_migrate_tables` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+- `only_schemas` (type `name[]`, default all schemas): list of schemas to
+  migrate
+
+  These must be written exactly like they are on the remote data source.
+
+- `with_data` (type `boolean`, default `TRUE`): if `FALSE`, migrate everything
+  but the table data
+
+  This is useful to test the migration of the metadata.
+
+This function calls `materialize_foreign_table` to replace all foreign tables
+created by `db_migrate_mkforeign` with actual tables.
+The table data are migrated unless `with_data` is `FALSE`.
+
+### `materialize_foreign_table` ###
+
+Parameters:
+
+- `schema` (type `name`, required): schema of the table to migrate
+
+- `table_name` (type `name`, required): name of the table to migrate
+
+- `with_data` (type `boolean`, default `TRUE`): if `FALSE`, migrate everything
+  but the table data
+
+  This is useful to test the migration of the metadata.
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+This function replaces a single foreign table created by `db_migrate_mkforeign`
+with an actual table.
+The table data are migrated unless `with_data` is `FALSE`.
+
+You don't need this function if you use `db_migrate_tables`.  It is provided as
+a low-level alternative and is particularly useful if you want to migrate
+several tables in parallel to improve processing speed.
 
 Plugin API
 ==========
