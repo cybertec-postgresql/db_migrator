@@ -72,7 +72,7 @@ BEGIN
    RETURN FALSE;
 END;$$;
 
-COMMENT ON FUNCTION materialize_foreign_table(name, name, boolean, name) IS
+COMMENT ON FUNCTION materialize_foreign_table(name,name,boolean,name) IS
    'turn a foreign table into a PostgreSQL table';
 
 CREATE FUNCTION db_migrate_refresh(
@@ -204,7 +204,16 @@ BEGIN
             v_column,
             v_pos,
             n_type,
-            v_type,
+            CASE WHEN v_length <> 0
+                 THEN v_type || '(' || v_length || ')'
+                 ELSE CASE WHEN coalesce(v_scale, 0) <> 0
+                           THEN v_type || '(' || v_precision || ',' || v_scale || ')'
+                           ELSE CASE WHEN coalesce(v_precision, 0) <> 0
+                                     THEN v_type || '(' || v_precision || ')'
+                                     ELSE v_type
+                                END
+                      END
+            END,
             v_nullable,
             expr
          )
@@ -416,12 +425,12 @@ BEGIN
       USING only_schemas;
 
    /* copy "triggers" view */
-   EXECUTE format(E'INSERT INTO triggers (schema, table_name, trigger_name, is_before, triggering_event,\n'
+   EXECUTE format(E'INSERT INTO triggers (schema, table_name, trigger_name, trigger_type, triggering_event,\n'
                    '                      for_each_row, when_clause, referencing_names, trigger_body, orig_source)\n'
                    '   SELECT %s(schema),\n'
                    '          %s(table_name),\n'
                    '          %s(trigger_name),\n'
-                   '          is_before,\n'
+                   '          trigger_type,\n'
                    '          triggering_event,\n'
                    '          for_each_row,\n'
                    '          when_clause,\n'
@@ -431,7 +440,7 @@ BEGIN
                    '   FROM %I.triggers\n'
                    '   WHERE $1 IS NULL OR schema =ANY ($1)\n'
                    'ON CONFLICT ON CONSTRAINT triggers_pkey DO UPDATE SET\n'
-                   '   is_before         = EXCLUDED.is_before,\n'
+                   '   trigger_type      = EXCLUDED.trigger_type,\n'
                    '   triggering_event  = EXCLUDED.triggering_event,\n'
                    '   for_each_row      = EXCLUDED.for_each_row,\n'
                    '   when_clause       = EXCLUDED.when_clause,\n'
@@ -491,7 +500,7 @@ BEGIN
    RETURN 0;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_refresh(name, name, name, name[]) IS
+COMMENT ON FUNCTION db_migrate_refresh(name,name,name,name[]) IS
   'update the PostgreSQL stage with values from the remote stage';
 
 CREATE FUNCTION db_migrate_prepare(
@@ -604,7 +613,7 @@ BEGIN
    );
 
    CREATE TABLE columns(
-      schema        name    NOT NULL,
+      schema        name    NOT NULL REFERENCES schemas,
       table_name    name    NOT NULL,
       column_name   name    NOT NULL,
       orig_column   text    NOT NULL,
@@ -616,9 +625,7 @@ BEGIN
       CONSTRAINT columns_pkey
          PRIMARY KEY (schema, table_name, column_name),
       CONSTRAINT columns_unique
-         UNIQUE (schema, table_name, position),
-      CONSTRAINT columns_fkey
-         FOREIGN KEY (schema, table_name) REFERENCES tables
+         UNIQUE (schema, table_name, position)
    );
 
    CREATE TABLE checks (
@@ -742,7 +749,7 @@ BEGIN
       schema            name    NOT NULL,
       table_name        name    NOT NULL,
       trigger_name      name    NOT NULL,
-      is_before         boolean NOT NULL,
+      trigger_type      text    NOT NULL,
       triggering_event  text    NOT NULL,
       for_each_row      boolean NOT NULL,
       when_clause       text,
@@ -802,7 +809,7 @@ BEGIN
    RETURN db_migrate_refresh(plugin, staging_schema, pgstage_schema, only_schemas);
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_prepare(name, name, name, name, name[], jsonb) IS
+COMMENT ON FUNCTION db_migrate_prepare(name,name,name,name,name[],jsonb) IS
    'first step of "db_migrate": create and populate staging schemas';
 
 CREATE FUNCTION db_migrate_mkforeign(
@@ -810,7 +817,6 @@ CREATE FUNCTION db_migrate_mkforeign(
    server         name,
    staging_schema name    DEFAULT NAME 'fdw_stage',
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
-   only_schemas   name[]  DEFAULT NULL,
    options        jsonb   DEFAULT NULL
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
@@ -879,14 +885,6 @@ BEGIN
       WHERE extname = 'db_migrator';
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
-   /* translate schema names */
-   EXECUTE format(
-              'SELECT array_agg(%s(os)) FROM unnest($1) AS os',
-              v_translate_identifier
-           )
-   INTO only_schemas
-   USING only_schemas;
-
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating schemas ...';
    SET LOCAL client_min_messages = warning;
@@ -894,8 +892,6 @@ BEGIN
    /* loop through the schemas that should be migrated */
    FOR s IN
       SELECT schema FROM schemas
-      WHERE only_schemas IS NULL
-         OR schema =ANY (only_schemas)
    LOOP
       BEGIN
          /* create schema */
@@ -938,8 +934,6 @@ BEGIN
    FOR sch, seq, minv, maxv, incr, cycl, cachesiz, lastval IN
       SELECT schema, sequence_name, min_value, max_value, increment_by, cyclical, cache_size, last_value
          FROM sequences
-      WHERE only_schemas IS NULL
-         OR schema =ANY (only_schemas)
    LOOP
       BEGIN
       EXECUTE format('CREATE SEQUENCE %I.%I INCREMENT %s MINVALUE %s MAXVALUE %s START %s CACHE %s %sCYCLE',
@@ -1111,13 +1105,12 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_mkforeign(name, name, name, name, name[], jsonb) IS
+COMMENT ON FUNCTION db_migrate_mkforeign(name,name,name,name,jsonb) IS
    'second step of "db_migrate": create schemas, sequences and foreign tables';
 
 CREATE FUNCTION db_migrate_tables(
    plugin         name,
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
-   only_schemas   name[]  DEFAULT NULL,
    with_data      boolean DEFAULT TRUE
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
@@ -1156,20 +1149,10 @@ BEGIN
       WHERE extname = 'ora_migrator';
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
-   /* translate schema names to lower case */
-   EXECUTE format(
-              'SELECT array_agg(%s(os)) FROM unnest($1) AS os',
-              v_translate_identifier
-           )
-   INTO only_schemas
-   USING only_schemas;
-
    /* loop through all foreign tables to be migrated */
    FOR sch, tab IN
       SELECT schema, table_name FROM tables
       WHERE migrate
-        AND (only_schemas IS NULL
-         OR schema =ANY (only_schemas))
    LOOP
       EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
       RAISE NOTICE 'Migrating table %.% ...', sch, tab;
@@ -1189,13 +1172,12 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_tables(name,name,name[],boolean) IS
+COMMENT ON FUNCTION db_migrate_tables(name,name,boolean) IS
    'third step of "db_migrate": copy table data from the remote database';
 
 CREATE FUNCTION db_migrate_functions(
    plugin         name,
-   pgstage_schema name    DEFAULT NAME 'pgsql_stage',
-   only_schemas   name[]  DEFAULT NULL
+   pgstage_schema name    DEFAULT NAME 'pgsql_stage'
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog SET check_function_bodies = off AS
 $$DECLARE
@@ -1236,20 +1218,10 @@ BEGIN
       WHERE extname = 'ora_migrator';
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
-   /* translate schema names to lower case */
-   EXECUTE format(
-              'SELECT array_agg(%s(os)) FROM unnest($1) AS os',
-              v_translate_identifier
-           )
-   INTO only_schemas
-   USING only_schemas;
-
    FOR sch, fname, src IN
       SELECT schema, function_name, source
       FROM functions
-      WHERE (only_schemas IS NULL
-         OR schema =ANY (only_schemas))
-        AND migrate
+      WHERE migrate
    LOOP
       BEGIN
          /* set "search_path" so that the function can be created without schema */
@@ -1293,13 +1265,12 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_functions(name,name,name[]) IS
+COMMENT ON FUNCTION db_migrate_functions(name,name) IS
    'fourth step of "db_migrate": create functions';
 
 CREATE FUNCTION db_migrate_triggers(
    plugin         name,
-   pgstage_schema name    DEFAULT NAME 'pgsql_stage',
-   only_schemas   name[]  DEFAULT NULL
+   pgstage_schema name    DEFAULT NAME 'pgsql_stage'
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog SET check_function_bodies = off AS
 $$DECLARE
@@ -1310,7 +1281,7 @@ $$DECLARE
    sch                    name;
    tabname                name;
    trigname               name;
-   bef                    boolean;
+   trigtype               text;
    event                  text;
    eachrow                boolean;
    whencl                 text;
@@ -1346,33 +1317,23 @@ BEGIN
       WHERE extname = 'ora_migrator';
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
-   /* translate schema names to lower case */
-   EXECUTE format(
-              'SELECT array_agg(%s(os)) FROM unnest($1) AS os',
-              v_translate_identifier
-           )
-   INTO only_schemas
-   USING only_schemas;
-
-   FOR sch, tabname, trigname, bef, event, eachrow, whencl, ref, src IN
-      SELECT schema, table_name, trigger_name, is_before, triggering_event,
+   FOR sch, tabname, trigname, trigtype, event, eachrow, whencl, ref, src IN
+      SELECT schema, table_name, trigger_name, trigger_type, triggering_event,
              for_each_row, when_clause, referencing_names, trigger_body
       FROM triggers
-      WHERE (only_schemas IS NULL
-         OR schema =ANY (only_schemas))
-        AND migrate
+      WHERE migrate
    LOOP
       BEGIN
          /* create the trigger function */
          EXECUTE format(E'CREATE FUNCTION %I.%I() RETURNS trigger LANGUAGE plpgsql AS\n$_f_$%s$_f_$',
                         sch, trigname, src);
          /* create the trigger itself */
-         EXECUTE format(E'CREATE TRIGGER %I %s %s ON %I.%I FOR EACH %s\n'
+         EXECUTE format(E'CREATE TRIGGER %I %s %s ON %I.%I %s FOR EACH %s\n'
                         '   EXECUTE PROCEDURE %I.%I()',
                         trigname,
-                        CASE WHEN bef THEN 'BEFORE' ELSE 'AFTER' END,
+                        trigtype,
                         event,
-                        sch, tabname,
+                        sch, tabname, ref,
                         CASE WHEN eachrow THEN 'ROW' ELSE 'STATEMENT' END,
                         sch, trigname);
       EXCEPTION
@@ -1400,12 +1361,12 @@ BEGIN
                   tabname,
                   format(E'CREATE FUNCTION %I.%I() RETURNS trigger LANGUAGE plpgsql AS\n$_f_$%s$_f_$',
                          sch, trigname, src) || E';\n' ||
-                  format(E'CREATE TRIGGER %I %s %s ON %I.%I FOR EACH %s\n'
+                  format(E'CREATE TRIGGER %I %s %s ON %I.%I %s FOR EACH %s\n'
                          '   EXECUTE PROCEDURE %I.%I()',
                          trigname,
-                         CASE WHEN bef THEN 'BEFORE' ELSE 'AFTER' END,
+                         trigtype,
                          event,
-                         sch, tabname,
+                         sch, tabname, ref
                          CASE WHEN eachrow THEN 'ROW' ELSE 'STATEMENT' END,
                          sch, trigname),
                   errmsg || coalesce(': ' || detail, '')
@@ -1421,13 +1382,12 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_triggers(name,name,name[]) IS
+COMMENT ON FUNCTION db_migrate_triggers(name,name) IS
    'fifth step of "db_migrate": create triggers';
 
 CREATE FUNCTION db_migrate_views(
    plugin         name,
-   pgstage_schema name    DEFAULT NAME 'pgsql_stage',
-   only_schemas   name[]  DEFAULT NULL
+   pgstage_schema name    DEFAULT NAME 'pgsql_stage'
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
 $$DECLARE
@@ -1471,20 +1431,10 @@ BEGIN
       WHERE extname = 'ora_migrator';
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
-   /* translate schema names to lower case */
-   EXECUTE format(
-              'SELECT array_agg(%s(os)) FROM unnest($1) AS os',
-              v_translate_identifier
-           )
-   INTO only_schemas
-   USING only_schemas;
-
    FOR sch, vname, src IN
       SELECT schema, view_name, definition
       FROM views
-      WHERE (only_schemas IS NULL
-         OR schema =ANY (only_schemas))
-        AND migrate
+      WHERE migrate
    LOOP
       stmt := format(E'CREATE VIEW %I.%I (', sch, vname);
       separator := E'\n   ';
@@ -1544,13 +1494,12 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_views(name,name,name[]) IS
+COMMENT ON FUNCTION db_migrate_views(name,name) IS
    'sixth step of "db_migrate": create views';
 
 CREATE FUNCTION db_migrate_constraints(
    plugin         name,
-   pgstage_schema name    DEFAULT NAME 'pgsql_stage',
-   only_schemas   name[]  DEFAULT NULL
+   pgstage_schema name    DEFAULT NAME 'pgsql_stage'
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
 $$DECLARE
@@ -1612,14 +1561,6 @@ BEGIN
       WHERE extname = 'ora_migrator';
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
-   /* translate schema names to lower case */
-   EXECUTE format(
-              'SELECT array_agg(%s(os)) FROM unnest($1) AS os',
-              v_translate_identifier
-           )
-   INTO only_schemas
-   USING only_schemas;
-
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating UNIQUE and PRIMARY KEY constraints ...';
    SET LOCAL client_min_messages = warning;
@@ -1634,9 +1575,7 @@ BEGIN
       FROM keys k
          JOIN tables t
             USING (schema, table_name)
-      WHERE (only_schemas IS NULL
-         OR k.schema =ANY (only_schemas))
-        AND t.migrate
+      WHERE t.migrate
         AND k.migrate
       ORDER BY schema, table_name, k.constraint_name, k.position
    LOOP
@@ -1742,10 +1681,7 @@ BEGIN
             USING (schema, table_name)
          JOIN tables tf
             ON fk.remote_schema = tf.schema AND fk.remote_table = tf.table_name
-      WHERE (only_schemas IS NULL
-         OR fk.schema =ANY (only_schemas)
-            AND fk.remote_schema =ANY (only_schemas))
-        AND tl.migrate
+      WHERE tl.migrate
         AND tf.migrate
         AND fk.migrate
       ORDER BY fk.schema, fk.table_name, fk.constraint_name, fk.position
@@ -1846,9 +1782,7 @@ BEGIN
       FROM checks c
          JOIN tables t
             USING (schema, table_name)
-      WHERE (only_schemas IS NULL
-         OR schema =ANY (only_schemas))
-        AND t.migrate
+      WHERE t.migrate
         AND c.migrate
    LOOP
       BEGIN
@@ -1899,9 +1833,7 @@ BEGIN
             USING (schema, table_name, index_name)
          JOIN tables t
             USING (schema, table_name)
-      WHERE (only_schemas IS NULL
-         OR schema =ANY (only_schemas))
-        AND t.migrate
+      WHERE t.migrate
         AND ind.migrate
       ORDER BY schema, table_name, i.index_name, i.position
    LOOP
@@ -1998,9 +1930,7 @@ BEGIN
       FROM columns c
          JOIN tables t
             USING (schema, table_name)
-      WHERE (only_schemas IS NULL
-         OR schema =ANY (only_schemas))
-        AND t.migrate
+      WHERE t.migrate
         AND c.default_value IS NOT NULL
    LOOP
       BEGIN
@@ -2045,7 +1975,7 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate_constraints(name,name,name[])
+COMMENT ON FUNCTION db_migrate_constraints(name,name)
    IS 'seventh step of "db_migrate": create constraints and indexes';
 
 CREATE FUNCTION db_migrate_finish(
@@ -2105,37 +2035,37 @@ BEGIN
     * Second step:
     * Create the destination schemas and the foreign tables and sequences there.
     */
-   rc := rc + db_migrate_mkforeign(plugin, server, staging_schema, pgstage_schema, only_schemas, options);
+   rc := rc + db_migrate_mkforeign(plugin, server, staging_schema, pgstage_schema, options);
 
    /*
     * Third step:
     * Copy the tables data from the remote database.
     */
-   rc := rc + db_migrate_tables(plugin, pgstage_schema, only_schemas, with_data);
+   rc := rc + db_migrate_tables(plugin, pgstage_schema, with_data);
 
    /*
     * Fourth step:
     * Create functions (this won't do anything since they have "migrate = FALSE").
     */
-   rc := rc + db_migrate_functions(plugin, pgstage_schema, only_schemas);
+   rc := rc + db_migrate_functions(plugin, pgstage_schema);
 
    /*
     * Fifth step:
     * Create triggers (this won't do anything since they have "migrate = FALSE").
     */
-   rc := rc + db_migrate_triggers(plugin, pgstage_schema, only_schemas);
+   rc := rc + db_migrate_triggers(plugin, pgstage_schema);
 
    /*
     * Sixth step:
     * Create views.
     */
-   rc := rc + db_migrate_views(plugin, pgstage_schema, only_schemas);
+   rc := rc + db_migrate_views(plugin, pgstage_schema);
 
    /*
     * Seventh step:
     * Create constraints and indexes.
     */
-   rc := rc + db_migrate_constraints(plugin, pgstage_schema, only_schemas);
+   rc := rc + db_migrate_constraints(plugin, pgstage_schema);
 
    /*
     * Final step:
@@ -2148,5 +2078,5 @@ BEGIN
    RETURN rc;
 END;$$;
 
-COMMENT ON FUNCTION db_migrate(name, name, name, name, name[], jsonb, boolean) IS
+COMMENT ON FUNCTION db_migrate(name,name,name,name,name[],jsonb,boolean) IS
    'migrate a remote database from a foreign server to PostgreSQL';

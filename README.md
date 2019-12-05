@@ -58,8 +58,8 @@ You need to define these objects:
 ### `db_migrator` plugin ###
 
 You also need to install the `db_migrator` plugin for the data source from
-which you want to migrate.  Again, follow the installation instructions provided
-with the software.
+which you want to migrate.  Again, follow the installation instructions
+provided with the software.
 
 Installation
 ------------
@@ -140,7 +140,8 @@ are done with the migration.
 
 - `orig_table` (type `text`): table name as used in the remote data source
 
-- `migrate` (type `boolean`): `TRUE` if the table should be migrated
+- `migrate` (type `boolean`, default `TRUE`): `TRUE` if the table should
+  be migrated
 
   Modify this column if desired.
 
@@ -161,8 +162,7 @@ are done with the migration.
 
   Modify this column if desired.
 
-- `orig_type` (type `text`): data type in the remote data source (without
-  type modifiers)
+- `orig_type` (type `text`): data type in the remote data source
 
 - `nullable` (type `boolean`): `FALSE` if the column is `NOT NULL`
 
@@ -178,7 +178,8 @@ are done with the migration.
 
 - `table_name` (type `name`): table with the constraint
 
-- `constraint_name` (type `name`): name of the constraint (will not be migrated)
+- `constraint_name` (type `name`): name of the constraint
+  (will not be migrated)
 
 - `deferrable` (type `boolean`): `TRUE` if the constraint can be deferred
 
@@ -192,7 +193,8 @@ are done with the migration.
 
   Modify this column if desired.
 
-- `migrate` (type `boolean`): `TRUE` if the constraint should be migrated
+- `migrate` (type `boolean`, default `TRUE`): `TRUE` if the constraint should
+  be migrated
 
   Modify this column if desired.
 
@@ -202,7 +204,8 @@ are done with the migration.
 
 - `table_name` (type `name`): table with the constraint
 
-- `constraint_name` (type `name`): name of the constraint (will not be migrated)
+- `constraint_name` (type `name`): name of the constraint
+  (will not be migrated)
 
 - `deferrable` (type `boolean`): `TRUE` if the constraint can be deferred
 
@@ -218,7 +221,8 @@ are done with the migration.
 
 - `is_primary` (type `boolean`): `TRUE` if this is a primary key
 
-- `migrate` (type `boolean`): `TRUE` if the constraint should be migrated
+- `migrate` (type `boolean`, default `TRUE`): `TRUE` if the constraint should
+  be migrated
 
   Modify this column if desired.
 
@@ -234,7 +238,8 @@ are done with the migration.
 
   Modify this column if desired.
 
-- `migrate` (type `boolean`): `TRUE` if the constraint should be migrated
+- `migrate` (type `boolean`, default `TRUE`): `TRUE` if the constraint should
+  be migrated
 
   Modify this column if desired.
 
@@ -272,7 +277,8 @@ are done with the migration.
 
 - `orig_def` (type `text`): view definition on the remote data source
 
-- `migrate` (type `boolean`): `TRUE` if the constraint should be migrated
+- `migrate` (type `boolean`, default `TRUE`): `TRUE` if the constraint should
+  be migrated
 
   Modify this column if desired.
 
@@ -329,9 +335,12 @@ are done with the migration.
 
 - `orig_source` (type `text`): source code on the remote data source
 
-- `migrate` (type `boolean`): `TRUE` is the object should be migrated
+- `migrate` (type `boolean`, default `FALSE`): `TRUE` is the object should
+  be migrated
 
   Modify this column if desired.
+  Note that since the default value is `FALSE`, functions and procedures will
+  not be migrated by default.
 
 - `verified` (type `boolean`): can be used however you want
 
@@ -346,24 +355,42 @@ are done with the migration.
 
 - `trigger_name` (type `name`): name of the trigger
 
-- `is_before` (type `boolean`): `TRUE` if it is a `BEFORE` trigger
+- `trigger_type` (type `text`): `BEFORE`, `AFTER` or `INSTEAD OF`
+
+  Modify this column if desired.
 
 - `triggering_event` (type `text`): `INSERT`, `UPDATE`, `DELETE`
   or `TRUNCATE` (if more than one, combine with `OR`)
 
+  Modify this column if desired.
+
 - `for_each_row` (type `boolean`): `TRUE` if the trigger is executed
   for each modified row rather than once per triggering statement
 
+  Modify this column if desired.
+
 - `when_clause` (type `text`): condition for the trigger execution
+
+  Modify this column if desired.
 
 - `referencing_names` (type `name`): the `REFERENCING` clause for the
   `CREATE TRIGGER` statement
 
+  Modify this column if desired.
+
 - `trigger_body` (type `text`): the function body for the trigger
 
-- `orig_source` (type `text`): the trigger source code on the remote data source
+  Modify this column if desired.
 
-- `migrate` (type `boolean`): `TRUE` if the trigger should be migrated
+- `orig_source` (type `text`): the trigger source code on the remote
+  data source
+
+- `migrate` (type `boolean`, default `FALSE`): `TRUE` if the trigger should
+  be migrated
+
+  Modify this column if desired.
+  Note that since the default value is `FALSE`, functions and procedures will
+  not be migrated by default.
 
 - `verified` (type `boolean`): can be used however you want
 
@@ -371,8 +398,8 @@ are done with the migration.
 
 ### `table_privs` (permissions on tables) ##ä
 
-These are not migrated by `db_migrator`, but can be used by the migration script
-to migrate permissions.
+These are not migrated by `db_migrator`, but can be used by the migration
+script to migrate permissions.
 
 - `schema` (type `name`): schema of the table with the privilege
 
@@ -389,8 +416,8 @@ to migrate permissions.
 
 ### `column_privs` (permissions on table columns) ###
 
-These are not migrated by `db_migrator`, but can be used by the migration script
-to migrate permissions.
+These are not migrated by `db_migrator`, but can be used by the migration
+script to migrate permissions.
 
 - `schema` (type `name`):
 
@@ -528,18 +555,13 @@ Parameters:
 - `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
   Postgres staging schema
 
-- `only_schemas` (type `name[]`, default all schemas): list of schemas to
-  migrate
-
-  These must be written exactly like they are on the remote data source.
-
 - `options` (type `jsonb`, optional): options to pass to the plugin
 
   Consult the documentation of the plugin for available options.
 
-Call this function once you have edited the Postgres stage to your satisfaction.
-It will create all schemas that should be migrated and foreign tables for
-all remote tables you want to migrate.
+Call this function once you have edited the Postgres stage to your
+satisfaction.  It will create all schemas that should be migrated and foreign
+tables for all remote tables you want to migrate.
 
 ### `db_migrate_tables` ###
 
@@ -549,11 +571,6 @@ Parameters:
 
 - `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
   Postgres staging schema
-
-- `only_schemas` (type `name[]`, default all schemas): list of schemas to
-  migrate
-
-  These must be written exactly like they are on the remote data source.
 
 - `with_data` (type `boolean`, default `TRUE`): if `FALSE`, migrate everything
   but the table data
@@ -588,8 +605,523 @@ You don't need this function if you use `db_migrate_tables`.  It is provided as
 a low-level alternative and is particularly useful if you want to migrate
 several tables in parallel to improve processing speed.
 
+### `db_migrate_functions` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Call this to migrate functions and procedures.
+Note that `migrate` is set to `FALSE` by default for functions and procedures,
+so you will have to change that flag if you want to migrate functions.
+
+### `db_migrate_triggers` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Call this to migrate triggers.
+Note that `migrate` is set to `FALSE` by default for triggers, so you will
+have to change that flag if you want to migrate functions.
+
+### `db_migrate_views` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Call this to migrate views.
+
+### `db_migrate_constraints` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Call this to migrate constraints, indexes and column defaults for the
+migrated tables.
+
+This function has to run after everything else has been migrated, so that
+all functions that may be needed by indexes or column defaults are
+already there.
+
+### `db_migrate_finish` ###
+
+Parameters:
+
+- `staging_schema` (type `name`, default `fdw_stage`): name of the remote
+  staging schema
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Call this function after you have migrated everything you need.  It will
+drop the staging schemas and all their content.
+
+### `db_migrate` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `server` (type `name`, required): name of the foreign server that describes
+  the data source from which to migrate
+
+- `staging_schema` (type `name`, default `fdw_stage`): name of the remote
+  staging schema
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+- `only_schemas` (type `name[]`, default all schemas): list of schemas to
+  migrate
+
+  These must be written exactly like they are on the remote data source.
+
+- `options` (type `jsonb`, optional): options to pass to the plugin
+
+  Consult the documentation of the plugin for available options.
+
+This function provides "one-click" migration by calling the other
+functions in the following order:
+
+- `db_migrate_prepare`
+
+- `db_migrate_mkforeign`
+
+- `db_migrate_tables`
+
+- `db_migrate_functions`
+
+- `db_migrate_triggers`
+
+- `db_migrate_views`
+
+- `db_migrate_constraints`
+
+- `db_migrate_finish`
+
+This provides a simple way to migrate simple databases (no user defined
+functions and triggers, standard compliant view definitions, no data type
+modifications necessary).
+
+Note that it will not migrate functions and triggers, since `migrate`
+is `FALSE` by default for these objects.
+
 Plugin API
 ==========
 
+A plugin for `db_migrator` must be a PostgreSQL extension and provide
+a number of functions:
+
+`db_migrator_callback`
+----------------------
+
+There are no input parameters. The output parameters are:
+
+- `create_metadata_views_fun` (type `regprocedure`):
+  the "metadata view creation function" that populates the FDW stage
+
+- `translate_datatype_fun` (type `regprocedure`):
+  the "data type translation function" that tranlates data types from the
+  remote data source into PostgreSQL data types
+
+- `translate_identifier_fun` (type `regprocedure`):
+  the "identifier translation function" that translates identifier names
+  from the remote data source into PostgreSQL identifiers
+
+- `translate_expression_fun` (type `regprocedure`):
+  the "expression translation function" that makes an effort at translating
+  SQL expressions from the remote data source to PostgreSQL
+
+- `create_foreign_table_fun` (type `regprocedure`):
+  the "foreign table creation function" that generates an SQL string to
+  define a foreign table
+
+These functions can have arbitrary names and are described in the following.
+
+Metadata view creation function
+-------------------------------
+
+Parameters:
+
+- `server` (type `name`, required): the name of the foreign server whose
+  metadata we want to access
+
+- `schema` (type `name`): the name of the FDW staging schema
+
+- `options` (type `jsonb`, optional): plugin-specific parameters
+
+This function is called by `db_migrate_prepare` after creating the FDW
+staging schema.  It has to create a number of foreign tables (or views on
+foreign tables) that provide access to the metadata of the remote data
+source.
+
+If the remote data source does not provide a certain feature (for example,
+if the data source has no concept of triggers), you can create an empty
+table instead of the corresponding foreign table.
+
+It is allowed to create additional objects in the FDW staging schema if
+the plugin provides additional features.  Similarly, it is allowed to
+provide other columns beside the ones required by the API specification.
+
+These foreign tables or views must be created:
+
+### table of schemas ###
+
+    schemas (
+       schema text NOT NULL
+    )
+
+### table of sequences ###
+
+    sequences (
+       schema        text    NOT NULL,
+       sequence_name text    NOT NULL,
+       min_value     numeric,
+       max_value     numeric,
+       increment_by  numeric NOT NULL,
+       cyclical      boolean NOT NULL,
+       cache_size    integer NOT NULL,
+       last_value    numeric NOT NULL
+    )
+
+- `min_value` and `max_value` are the minimal and maximal values the
+  sequence value can assume
+
+- `last_value` is the current position of the sequence value
+
+- `increment_by` is the difference between generated values
+
+- `cyclical` is `TRUE` for sequences that should continue with
+  `min_value` if `max_value` is exceeded
+
+- `cache_size` is the number of sequence values cached on the client side
+
+### table of tables ###
+
+    tables (
+       schema     text NOT NULL,
+       table_name text NOT NULL
+    )
+
+### table of columns of tables and views ###
+
+    columns (
+       schema        text    NOT NULL,
+       table_name    text    NOT NULL,
+       column_name   text    NOT NULL,
+       position      integer NOT NULL,
+       type_name     text    NOT NULL,
+       length        integer NOT NULL,
+       precision     integer,
+       scale         integer,
+       nullable      boolean NOT NULL,
+       default_value text
+    )
+
+Note that this table has to contain columns for both the `tables`
+and the `views` table.
+
+- `position` defines the order of the table columns
+
+- `length` denotes the length limit for variables length data types
+  like `character varying`
+
+  Set this to 0 for data types that have fixed length or where
+  `precision` and `scale` apply.
+
+- `precision` denotes the number of significant digits for numeric
+  data types of variables size
+
+- `scale` denotes the maximum number of significant digits after
+  the decimal point for numeric data types of variable size
+
+- `default_value` is the SQL expression from the `DEFAULT` clause
+  of the column definition
+
+### table of check constraints ###
+
+    checks (
+       schema          text    NOT NULL,
+       table_name      text    NOT NULL,
+       constraint_name text    NOT NULL,
+       deferrable      boolean NOT NULL,
+       deferred        boolean NOT NULL,
+       condition       text    NOT NULL
+    )
+
+- `constraint_name` identifies the constraint, but the name won't be migrated
+
+- `deferrable` should be `TRUE` if the constraint execution can be
+  deferred to the end of the transaction
+
+- `deferred` should be `TRUE` if the constraint is automatically
+  deferred
+
+- `condition` is the SQL expression that defines the check constraint
+
+### table of primary key and unique constraint columns ###
+
+    keys (
+       schema          text    NOT NULL,
+       table_name      text    NOT NULL,
+       constraint_name text    NOT NULL,
+       deferrable      boolean NOT NULL,
+       deferred        boolean NOT NULL,
+       column_name     text    NOT NULL,
+       position        integer NOT NULL,
+       is_primary      boolean NOT NULL
+    )
+
+- `constraint_name` identifies the constraint, but the name won't be migrated
+
+- `deferrable` should be `TRUE` if the constraint execution can be
+  deferred to the end of the transaction
+
+- `deferred` should be `TRUE` if the constraint is automatically
+  deferred
+
+- `position` defines the order of columns in a multi-column constraint
+
+- `is_primary` is `FALSE` for unique constraints and `TRUE` for primary keys
+
+For a multi-column constraint, the table will have one row per column.
+
+### table of foreign key constraint columns ###
+
+    foreign_keys (
+       schema          text    NOT NULL,
+       table_name      text    NOT NULL,
+       constraint_name text    NOT NULL,
+       deferrable      boolean NOT NULL,
+       deferred        boolean NOT NULL,
+       delete_rule     text    NOT NULL,
+       column_name     text    NOT NULL,
+       position        integer NOT NULL,
+       remote_schema   text    NOT NULL,
+       remote_table    text    NOT NULL,
+       remote_column   text    NOT NULL
+    )
+
+- `constraint_name` identifies the constraint, but the name won't be migrated
+
+- `deferrable` should be `TRUE` if the constraint execution can be
+  deferred to the end of the transaction
+
+- `deferred` should be `TRUE` if the constraint is automatically
+  deferred
+
+- `position` defines the order of columns in a multi-column constraint
+
+For a multi-column constraint, the table will have one row per column.
+
+### table of views ###
+
+    views (
+       schema     text NOT NULL,
+       view_name  text NOT NULL,
+       definition text NOT NULL
+    )
+
+- `definition` is the `SELECT` statement that defines the view
+
+The columns of the view are defines in the `columns` table.
+
+### table of functions and procedures ###
+
+    functions (
+       schema        text    NOT NULL,
+       function_name text    NOT NULL,
+       is_procedure  boolean NOT NULL,
+       source        text    NOT NULL
+    )
+
+- `is_procedure` is `FALSE` for functions and `TRUE` for procedures
+
+- `source` is the source code of the function, including the parameter list
+  and the return type
+
+### table of index columns ###
+
+    index_columns (
+       schema        text    NOT NULL,
+       table_name    text    NOT NULL,
+       index_name    text    NOT NULL,
+       position      integer NOT NULL,
+       descend       boolean NOT NULL,
+       is_expression boolean NOT NULL,
+       column_name   text    NOT NULL
+    )
+
+- `index_name` identifies the index, but the name won't be migrated
+
+- `position` defines the order of columns in a multi-column index
+
+- `descend` is `FALSE` for index columns in ascending sort order and `TRUE`
+  for index columns in descending sort order
+
+- `is_expression` is `FALSE` if `column_name` is a regular column name
+  rather than an expression
+
+- `column_name` is the indexed column name or expression
+
+### table of triggers ###
+
+    triggers (
+       schema            text    NOT NULL,
+       table_name        text    NOT NULL,
+       trigger_name      text    NOT NULL,
+       trigger_type      text    NOT NULL,
+       triggering_event  text    NOT NULL,
+       for_each_row      boolean NOT NULL,
+       when_clause       text,
+       referencing_names text,
+       trigger_body      text    NOT NULL
+    )
+
+- `trigger_type` should be `BEFORE`, `AFTER` or `INSTEAD OF`
+
+- `triggering_event` describes the DML events that cause trigger execution,
+  like `DELETE` or `INSERT OR UPDATE`
+
+- `for_each_row` is `FALSE` for statement level triggers and `TRUE` for
+  row level triggers
+
+- `when_clause` is an SQL expression for conditional trigger execution
+
+- `referencing_names` is the `REFERENCES OLD TABLE AS ... NEW TABLE AS ...`
+  clause
+
+- `trigger_body` is the source code of the trigger
+
+### table of table privileges ###
+
+    table_privs (
+       schema     text    NOT NULL,
+       table_name text    NOT NULL,
+       privilege  text    NOT NULL,
+       grantor    text    NOT NULL,
+       grantee    text    NOT NULL,
+       grantable  boolean NOT NULL
+    )
+
+### table of column privileges ###
+
+    column_privs (
+       schema      text    NOT NULL,
+       table_name  text    NOT NULL,
+       column_name text    NOT NULL,
+       privilege   text    NOT NULL,
+       grantor     text    NOT NULL,
+       grantee     text    NOT NULL,
+       grantable   boolean NOT NULL
+    )
+
+Data type translation function
+------------------------------
+
+Parameters:
+
+- type name (type `text`): the name of the data type on the remote data source
+
+- length (type `integer`): the maximal length for non-numeric data types of
+  variable length
+
+- precision (type `integer`): the maximal number of significant digits for
+  numeric data types of variable length
+
+- scale (type `integer`): the number of digits after the decimal point for
+  numeric data types of variable length
+
+Result type: `text`
+
+This function translates data types from the remote data source to PostgreSQL
+data types.  The result should include the type modifiers if applicable,
+for example `character varying(20)`.
+
+Identifier translation function
+-------------------------------
+
+Parameters:
+
+- identifier name (type `text`): the name of the identifier on the remote
+  data source
+
+Result type: `name`
+
+This function should generate a PostgreSQL object or column name.
+If no translation is required, the function should just return its
+argument, which will automatically be truncated to 63 bytes.
+
+Expression translation function
+-------------------------------
+
+Parameters:
+
+- SQL expression (type `text`): SQL expression from the remote data source
+  as used in column defaults, check constraints or index definitions
+
+Result type: `text`
+
+This function should make a best effort in automatically translating
+expressions between the SQL dialects.  Anything that this function cannot
+translate will have to be translated by hand during the migration.
+
+Foreign table creation function
+-------------------------------
+
+Parameters:
+
+- foreign server (type `name`): the PostgreSQL foreign server to migrate
+
+- schema (type `name`): PostgreSQL schema name for the foreign table
+
+- table name (type `name`): PostgreSQL name of the foreign table
+
+- original schema (type `text`): schema of the table on the remote data
+  source
+
+- original table name (type `text`): name of the table on the remote data
+  source
+
+- column names (type `name[]`): names for the foreign table columns
+
+- original column names (type `text[]`): names of the columns on the remote
+  data source
+
+- data types (type `text[]`): data types for the foreign table columns
+
+- nullable (type `boolean[]`): `FALSE` if the foreign table column is
+  `NOT NULL`
+
+- extra options (type `jsonb`): options specific to the plugin; this is
+  passed through from the `options` argument of `db_migrate_mkforeign`
+
+Result type: `text`
+
+This function generates a `CREATE FOREIGN TABLE` statement that creates
+a foreign table with these definitions.  This is required because the syntax
+varies between foreign data wrappers.
+
 Support
 =======
+
+Create an [issue on Github][issue] or contact [Cybertec][cybertec].
+
+
+ [issue]: https://github.com/cybertec-postgresql/db_migrator/issues
+ [cybertec]: https://www.cybertec-postgresql.com
