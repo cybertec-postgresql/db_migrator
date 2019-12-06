@@ -31,15 +31,6 @@ Setup
 Prerequisites
 -------------
 
-### Permissions ###
-
-You need a database user with the `CREATE` privilege on the current database
-who has `USAGE` privilege on the schemas where the extensions are installed
-and `EXECUTE` privileges on all required migration functions (the latter are
-usually granted by default).
-
-The permissions can be reduced once the migration is complete.
-
 ### Foreign Data Wrapper ###
 
 You need to install the foreign data wrapper for the data source from which
@@ -53,7 +44,23 @@ You need to define these objects:
 
 - a foreign server that describes how to connect to the remote data source
 
-- a user mapping for the server to provide credentials for the migration user
+- a user mapping for the server to provide credentials for the user that
+  performs the migration
+
+### Permissions ###
+
+You need a database user with
+
+- the `CREATE` privilege on the current database
+
+- the `USAGE` privilege on the schemas where the extensions are installed
+
+- the `USAGE` privilege on the foreign server
+
+- `EXECUTE` privileges on all required migration functions (this is
+  usually granted by default)
+
+The permissions can be reduced once the migration is complete.
 
 ### `db_migrator` plugin ###
 
@@ -441,6 +448,9 @@ migrated schemas and objects.  Ownership can be transferred once migration
 is complete.  Permissions on database objects are not migrated (but the
 plugin may offer information about the permissions on the data source).
 
+There is no special support for translating procedural code (functions,
+procedures and triggers), you will have to do that yourself.
+
 For very simple cases (no stored procedures or triggers to migrate, all
 views in standard SQL, no data type adaptions required) you can simply call
 the `db_migrate` function to migrate the database schemas you want.
@@ -485,6 +495,15 @@ does the following (or parts thereof):
 
 - Finally, call `db_migrate_finish` to remove the FDW and Postgres staging
   schemas created by `db_migrate_prepare`.
+
+An errors (except connection problems) that happen during database migration
+will not terminate processing.  Rather, they will be reported as warnings.
+Additionally, such errors are logged in the table `migrate_log` in the
+PostgreSQL staging schema.
+
+Later errors can be consequences of earlier errors: for example, any
+failure to migrate an Oracle table will also make all views and constraints
+that depend on that table fail.
 
 After you are done, drop the migration extensions to remove all traces
 of the migration.
@@ -955,6 +974,20 @@ The columns of the view are defines in the `columns` table.
 - `source` is the source code of the function, including the parameter list
   and the return type
 
+### table of indexes ###
+
+    indexes (
+       schema        text    NOT NULL,
+       table_name    text    NOT NULL,
+       index_name    text    NOT NULL,
+       is_expression boolean NOT NULL
+    )
+
+- `index_name` identifies the index, but the name won't be migrated
+
+- `is_expression` is `FALSE` if `column_name` is a regular column name
+  rather than an expression
+
 ### table of index columns ###
 
     index_columns (
@@ -966,8 +999,6 @@ The columns of the view are defines in the `columns` table.
        is_expression boolean NOT NULL,
        column_name   text    NOT NULL
     )
-
-- `index_name` identifies the index, but the name won't be migrated
 
 - `position` defines the order of columns in a multi-column index
 

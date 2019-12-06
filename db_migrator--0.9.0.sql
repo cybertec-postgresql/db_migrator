@@ -158,6 +158,30 @@ BEGIN
 
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
+   /* refresh "schemas" table */
+   EXECUTE format(E'INSERT INTO schemas (schema, orig_schema)\n'
+                   '   SELECT %s(schema),\n'
+                   '          schema\n'
+                   '   FROM %I.schemas\n'
+                   '   WHERE $1 IS NULL OR schema =ANY ($1)\n'
+                   'ON CONFLICT ON CONSTRAINT schemas_pkey DO NOTHING',
+                  v_translate_identifier,
+                  staging_schema)
+      USING only_schemas;
+
+   /* refresh "tables" table */
+   EXECUTE format(E'INSERT INTO tables (schema, table_name, orig_table)\n'
+                   '   SELECT %s(schema),\n'
+                   '          %s(table_name),\n'
+                   '          table_name\n'
+                   '   FROM %I.tables\n'
+                   '   WHERE $1 IS NULL OR schema =ANY ($1)\n'
+                   'ON CONFLICT ON CONSTRAINT tables_pkey DO NOTHING',
+                  v_translate_identifier,
+                  v_translate_identifier,
+                  staging_schema)
+      USING only_schemas;
+
    /* loop through foreign columns and translate them to PostgreSQL columns */
    LOOP
       FETCH c_col INTO v_schema, v_table, v_column, v_pos, v_type,
@@ -207,7 +231,7 @@ BEGIN
             CASE WHEN v_length <> 0
                  THEN v_type || '(' || v_length || ')'
                  ELSE CASE WHEN coalesce(v_scale, 0) <> 0
-                           THEN v_type || '(' || v_precision || ',' || v_scale || ')'
+                           THEN concat(v_type, '(' || v_precision || ',' || v_scale || ')')
                            ELSE CASE WHEN coalesce(v_precision, 0) <> 0
                                      THEN v_type || '(' || v_precision || ')'
                                      ELSE v_type
@@ -224,23 +248,7 @@ BEGIN
 
    CLOSE c_col;
 
-   /* copy "tables" table */
-   EXECUTE format(E'INSERT INTO tables (schema, orig_schema, table_name, orig_table)\n'
-                   '   SELECT %s(schema),\n'
-                   '          schema,\n'
-                   '          %s(table_name),\n'
-                   '          table_name\n'
-                   '   FROM %I.tables\n'
-                   '   WHERE $1 IS NULL OR schema =ANY ($1)\n'
-                   'ON CONFLICT ON CONSTRAINT tables_pkey DO UPDATE SET\n'
-                   '   orig_schema = EXCLUDED.orig_schema,\n'
-                   '   orig_table   = EXCLUDED.orig_table',
-                  v_translate_identifier,
-                  v_translate_identifier,
-                  staging_schema)
-      USING only_schemas;
-
-   /* copy "checks" table */
+   /* refresh "checks" table */
    EXECUTE format(E'INSERT INTO checks (schema, table_name, constraint_name, "deferrable", deferred, condition)\n'
                    '   SELECT %s(schema),\n'
                    '          %s(table_name),\n'
@@ -262,7 +270,7 @@ BEGIN
                   staging_schema)
       USING only_schemas;
 
-   /* copy "foreign_keys" table */
+   /* refresh "foreign_keys" table */
    EXECUTE format(E'INSERT INTO foreign_keys (schema, table_name, constraint_name, "deferrable", deferred, delete_rule,\n'
                    '                          column_name, position, remote_schema, remote_table, remote_column)\n'
                    '   SELECT %s(schema),\n'
@@ -296,7 +304,7 @@ BEGIN
                   staging_schema)
       USING only_schemas;
 
-   /* copy "keys" table */
+   /* refresh "keys" table */
    EXECUTE format(E'INSERT INTO keys (schema, table_name, constraint_name, "deferrable", deferred, column_name, position, is_primary)\n'
                    '   SELECT %s(schema),\n'
                    '          %s(table_name),\n'
@@ -320,7 +328,7 @@ BEGIN
                   staging_schema)
       USING only_schemas;
 
-   /* copy "views" table */
+   /* refresh "views" table */
    EXECUTE format(E'INSERT INTO views (schema, view_name, definition, orig_def)\n'
                    '   SELECT %s(schema),\n'
                    '          %s(view_name),\n'
@@ -335,7 +343,7 @@ BEGIN
                   staging_schema)
       USING only_schemas;
 
-   /* copy "functions" view */
+   /* refresh "functions" table */
    EXECUTE format(E'INSERT INTO functions (schema, function_name, is_procedure, source, orig_source)\n'
                    '   SELECT %s(schema),\n'
                    '          %s(function_name),\n'
@@ -352,7 +360,7 @@ BEGIN
                   staging_schema)
       USING only_schemas;
 
-   /* copy "sequences" view */
+   /* refresh "sequences" table */
    EXECUTE format(E'INSERT INTO sequences (schema, sequence_name, min_value, max_value, increment_by,\n'
                    '                       cyclical, cache_size, last_value, orig_value)\n'
                    '   SELECT %s(schema),\n'
@@ -378,12 +386,27 @@ BEGIN
                   staging_schema)
       USING only_schemas;
 
-   /* copy "index_columns" view */
-   EXECUTE format(E'INSERT INTO index_columns (schema, table_name, index_name, uniqueness, position, descend, is_expression, column_name)\n'
+   /* refresh "indexes" table */
+   EXECUTE format(E'INSERT INTO indexes (schema, table_name, index_name, uniqueness)\n'
+                   '   SELECT DISTINCT %s(schema),\n'
+                   '                   %s(table_name),\n'
+                   '                   %s(index_name),\n'
+                   '                   uniqueness\n'
+                   '   FROM %I.indexes\n'
+                   '   WHERE $1 IS NULL OR schema =ANY ($1)\n'
+                   'ON CONFLICT ON CONSTRAINT indexes_pkey DO UPDATE SET\n'
+                   '   uniqueness = EXCLUDED.uniqueness',
+                  v_translate_identifier,
+                  v_translate_identifier,
+                  v_translate_identifier,
+                  staging_schema)
+      USING only_schemas;
+
+   /* refresh "index_columns" table */
+   EXECUTE format(E'INSERT INTO index_columns (schema, table_name, index_name, position, descend, is_expression, column_name)\n'
                    '   SELECT %s(schema),\n'
                    '          %s(table_name),\n'
                    '          %s(index_name),\n'
-                   '          uniqueness,\n'
                    '          position,\n'
                    '          descend,\n'
                    '          is_expression,\n'
@@ -392,7 +415,6 @@ BEGIN
                    '   WHERE $1 IS NULL OR schema =ANY ($1)\n'
                    'ON CONFLICT ON CONSTRAINT index_columns_pkey DO UPDATE SET\n'
                    '   table_name    = EXCLUDED.table_name,\n'
-                   '   uniqueness    = EXCLUDED.uniqueness,\n'
                    '   descend       = EXCLUDED.descend,\n'
                    '   is_expression = EXCLUDED.is_expression,\n'
                    '   column_name   = EXCLUDED.column_name',
@@ -403,28 +425,7 @@ BEGIN
                   staging_schema)
       USING only_schemas;
 
-   /* refresh "indexes" table */
-   INSERT INTO indexes (schema, table_name, index_name, uniqueness)
-      SELECT DISTINCT schema,
-                      table_name,
-                      index_name,
-                      uniqueness
-      FROM index_columns
-   ON CONFLICT ON CONSTRAINT indexes_pkey DO UPDATE SET
-      table_name = EXCLUDED.table_name,
-      uniqueness = EXCLUDED.uniqueness;
-
-   /* copy "schemas" table */
-   EXECUTE format(E'INSERT INTO schemas (schema)\n'
-                   '   SELECT %s(schema)\n'
-                   '   FROM %I.schemas\n'
-                   '   WHERE $1 IS NULL OR schema =ANY ($1)\n'
-                   'ON CONFLICT DO NOTHING',
-                  v_translate_identifier,
-                  staging_schema)
-      USING only_schemas;
-
-   /* copy "triggers" view */
+   /* refresh "triggers" table */
    EXECUTE format(E'INSERT INTO triggers (schema, table_name, trigger_name, trigger_type, triggering_event,\n'
                    '                      for_each_row, when_clause, referencing_names, trigger_body, orig_source)\n'
                    '   SELECT %s(schema),\n'
@@ -452,7 +453,7 @@ BEGIN
                   staging_schema)
       USING only_schemas;
 
-   /* copy "table_privs" table */
+   /* refresh "table_privs" table */
    EXECUTE format(E'INSERT INTO table_privs (schema, table_name, privilege, grantor, grantee, grantable)\n'
                    '   SELECT %s(schema),\n'
                    '          %s(table_name),\n'
@@ -472,7 +473,7 @@ BEGIN
                   staging_schema)
       USING only_schemas;
 
-   /* copy "column_privs" table */
+   /* refresh "column_privs" table */
    EXECUTE format(E'INSERT INTO column_privs (schema, table_name, column_name, privilege, grantor, grantee, grantable)\n'
                    '   SELECT %s(schema),\n'
                    '          %s(table_name),\n'
@@ -598,9 +599,8 @@ BEGIN
 
    /* create tables in the PostgreSQL stage */
    CREATE TABLE schemas (
-      schema      name NOT NULL,
-      orig_schema text NOT NULL,
-         CONSTRAINT schemas_pkey PRIMARY KEY
+      schema      name NOT NULL PRIMARY KEY,
+      orig_schema text NOT NULL
    );
 
    CREATE TABLE tables (
@@ -988,11 +988,13 @@ BEGIN
           '       pc.position,\n'
           '       pc.type_name,\n'
           '       pc.nullable,\n'
-          '       pt.orig_schema,\n'
+          '       ps.orig_schema,\n'
           '       pt.orig_table\n'
           'FROM columns pc\n'
           '   JOIN tables pt\n'
           '      USING (schema, table_name)\n'
+          '   JOIN schemas ps\n'
+          '      USING (schema)\n'
           'WHERE pt.migrate\n'
           'ORDER BY schema, table_name, pc.position',
          staging_schema)
