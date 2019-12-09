@@ -380,11 +380,6 @@ are done with the migration.
 
   Modify this column if desired.
 
-- `referencing_names` (type `name`): the `REFERENCING` clause for the
-  `CREATE TRIGGER` statement
-
-  Modify this column if desired.
-
 - `trigger_body` (type `text`): the function body for the trigger
 
   Modify this column if desired.
@@ -1020,7 +1015,6 @@ The columns of the view are defines in the `columns` table.
        triggering_event  text    NOT NULL,
        for_each_row      boolean NOT NULL,
        when_clause       text,
-       referencing_names text,
        trigger_body      text    NOT NULL
     )
 
@@ -1033,9 +1027,6 @@ The columns of the view are defines in the `columns` table.
   row level triggers
 
 - `when_clause` is an SQL expression for conditional trigger execution
-
-- `referencing_names` is the `REFERENCES OLD TABLE AS ... NEW TABLE AS ...`
-  clause
 
 - `trigger_body` is the source code of the trigger
 

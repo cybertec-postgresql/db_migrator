@@ -26,7 +26,7 @@ $$DECLARE
 BEGIN
    BEGIN
       /* rename the foreign table */
-      ft := table_name || E'\x07';
+      ft := substr(table_name, 1, 62) || E'\x07';
       EXECUTE format('ALTER FOREIGN TABLE %I.%I RENAME TO %I', schema, table_name, ft);
 
       /* create a table */
@@ -427,7 +427,7 @@ BEGIN
 
    /* refresh "triggers" table */
    EXECUTE format(E'INSERT INTO triggers (schema, table_name, trigger_name, trigger_type, triggering_event,\n'
-                   '                      for_each_row, when_clause, referencing_names, trigger_body, orig_source)\n'
+                   '                      for_each_row, when_clause, trigger_body, orig_source)\n'
                    '   SELECT %s(schema),\n'
                    '          %s(table_name),\n'
                    '          %s(trigger_name),\n'
@@ -435,7 +435,6 @@ BEGIN
                    '          triggering_event,\n'
                    '          for_each_row,\n'
                    '          when_clause,\n'
-                   '          referencing_names,\n'
                    '          trigger_body,\n'
                    '          trigger_body\n'
                    '   FROM %I.triggers\n'
@@ -445,7 +444,6 @@ BEGIN
                    '   triggering_event  = EXCLUDED.triggering_event,\n'
                    '   for_each_row      = EXCLUDED.for_each_row,\n'
                    '   when_clause       = EXCLUDED.when_clause,\n'
-                   '   referencing_names = EXCLUDED.referencing_names,\n'
                    '   orig_source       = EXCLUDED.orig_source',
                   v_translate_identifier,
                   v_translate_identifier,
@@ -753,7 +751,6 @@ BEGIN
       triggering_event  text    NOT NULL,
       for_each_row      boolean NOT NULL,
       when_clause       text,
-      referencing_names name    NOT NULL,
       trigger_body      text    NOT NULL,
       orig_source       text    NOT NULL,
       migrate           boolean NOT NULL DEFAULT FALSE,
@@ -1287,7 +1284,6 @@ $$DECLARE
    event                  text;
    eachrow                boolean;
    whencl                 text;
-   ref                    text;
    src                    text;
    errmsg                 text;
    detail                 text;
@@ -1319,9 +1315,9 @@ BEGIN
       WHERE extname = 'ora_migrator';
    EXECUTE format('SET LOCAL search_path = %I, %I', pgstage_schema, extschema);
 
-   FOR sch, tabname, trigname, trigtype, event, eachrow, whencl, ref, src IN
+   FOR sch, tabname, trigname, trigtype, event, eachrow, whencl, src IN
       SELECT schema, table_name, trigger_name, trigger_type, triggering_event,
-             for_each_row, when_clause, referencing_names, trigger_body
+             for_each_row, when_clause, trigger_body
       FROM triggers
       WHERE migrate
    LOOP
@@ -1330,12 +1326,12 @@ BEGIN
          EXECUTE format(E'CREATE FUNCTION %I.%I() RETURNS trigger LANGUAGE plpgsql AS\n$_f_$%s$_f_$',
                         sch, trigname, src);
          /* create the trigger itself */
-         EXECUTE format(E'CREATE TRIGGER %I %s %s ON %I.%I %s FOR EACH %s\n'
+         EXECUTE format(E'CREATE TRIGGER %I %s %s ON %I.%I FOR EACH %s\n'
                         '   EXECUTE PROCEDURE %I.%I()',
                         trigname,
                         trigtype,
                         event,
-                        sch, tabname, ref,
+                        sch, tabname,
                         CASE WHEN eachrow THEN 'ROW' ELSE 'STATEMENT' END,
                         sch, trigname);
       EXCEPTION
@@ -1363,12 +1359,12 @@ BEGIN
                   tabname,
                   format(E'CREATE FUNCTION %I.%I() RETURNS trigger LANGUAGE plpgsql AS\n$_f_$%s$_f_$',
                          sch, trigname, src) || E';\n' ||
-                  format(E'CREATE TRIGGER %I %s %s ON %I.%I %s FOR EACH %s\n'
+                  format(E'CREATE TRIGGER %I %s %s ON %I.%I FOR EACH %s\n'
                          '   EXECUTE PROCEDURE %I.%I()',
                          trigname,
                          trigtype,
                          event,
-                         sch, tabname, ref
+                         sch, tabname,
                          CASE WHEN eachrow THEN 'ROW' ELSE 'STATEMENT' END,
                          sch, trigname),
                   errmsg || coalesce(': ' || detail, '')
