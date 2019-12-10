@@ -15,15 +15,74 @@ Currently, plugins exist for the following data sources:
 See the section [Plugin API](#plugin-api) below if you want to develop a
 plugin (I'd be happy to add it to the list above).
 
-See [Setup](#setup) below for installation instructions and [Usage](#usage)
-for instructions how to best migrate a database.
+See [Setup](#setup) below for installation instructions,
+[Architecture](#architecture) so that you understand what is going on and
+[Usage](#usage) for instructions how to best migrate a database.
 
  [ext]: https://www.postgresql.org/docs/current/extend-extensions.html
  [fdw]: https://www.postgresql.org/docs/current/ddl-foreign-data.html
  [ora_migrator]: https://github.com/cybertec-postgresql/ora_migrator
 
-Cookbook
+Showcase
 ========
+
+This is a complete example of a simple migration of an Oracle database
+using the `ora_migrator` plugin.
+
+A superuser sets the stage:
+
+    CREATE EXTENSION oracle_fdw;
+
+    CREATE SERVER oracle FOREIGN DATA WRAPPER oracle_fdw
+       OPTIONS (dbserver '//dbserver.mydomain.com/ORADB');
+
+    GRANT USAGE ON FOREIGN SERVER oracle TO migrator;
+
+    CREATE USER MAPPING FOR migrator SERVER oracle
+       OPTIONS (user 'orauser', password 'orapwd');
+
+PostgreSQL user `migrator` has the privilege to create PostgreSQL schemas
+and Oracle user `orauser` has the `SELECT ANY DICTIONARY` privilege.
+
+Now we connect as `migrator` and perform the migration so that all objects
+will belong to this user:
+
+    CREATE EXTENSION ora_migrator;
+
+    SELECT db_migrate(
+       plugin => 'ora_migrator',
+       server => 'oracle',
+       only_schemas => '{TESTSCHEMA1,TESTSCHEMA2}'
+    );
+
+    NOTICE:  Creating staging schemas "fdw_stage" and "pgsql_stage" ...
+    NOTICE:  Creating foreign metadata views in schema "fdw_stage" ...
+    NOTICE:  Creating schemas ...
+    NOTICE:  Creating sequences ...
+    NOTICE:  Creating foreign tables ...
+    NOTICE:  Migrating table testschema1.baddata ...
+    WARNING:  Error loading table data for testschema1.baddata
+    DETAIL:  invalid byte sequence for encoding "UTF8": 0x00: 
+    NOTICE:  Migrating table testschema1.log ...
+    NOTICE:  Migrating table testschema1.tab1 ...
+    NOTICE:  Migrating table testschema1.tab2 ...
+    NOTICE:  Migrating table testschema2.tab3 ...
+    NOTICE:  Creating UNIQUE and PRIMARY KEY constraints ...
+    WARNING:  Error creating primary key or unique constraint on table testschema1.baddata
+    DETAIL:  relation "testschema1.baddata" does not exist: 
+    NOTICE:  Creating FOREIGN KEY constraints ...
+    NOTICE:  Creating CHECK constraints ...
+    NOTICE:  Creating indexes ...
+    NOTICE:  Setting column default values ...
+    NOTICE:  Dropping staging schemas ...
+    NOTICE:  Migration completed with 2 errors.
+     db_migrate 
+    ------------
+              2
+    (1 row)
+
+Even though the migration of one table failed because of bad data in
+the Oracle database, the rest of the data were migrated successfully.
 
 Setup
 =====
