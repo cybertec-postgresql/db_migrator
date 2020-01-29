@@ -228,7 +228,9 @@ BEGIN
             v_column,
             v_pos,
             n_type,
-            CASE WHEN v_length <> 0
+            CASE WHEN position('(' in v_type) <> 0  /* type name contains modifier */
+                 THEN v_type
+                 WHEN v_length <> 0
                  THEN v_type || '(' || v_length || ')'
                  ELSE CASE WHEN coalesce(v_scale, 0) <> 0
                            THEN concat(v_type, '(' || v_precision || ',' || v_scale || ')')
