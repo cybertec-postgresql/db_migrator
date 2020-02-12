@@ -219,6 +219,8 @@ are done with the migration.
 
 - `column_name` (type `name`): name of the column
 
+- `column_options` (type `jsonb`): plugin-specific column options
+
 - `orig_column` (type `text`): column name as used in the remote data source
 
 - `position` (type `integer`): defines the order of the columns (1 for the
@@ -1180,6 +1182,8 @@ Parameters:
   source
 
 - column names (type `name[]`): names for the foreign table columns
+
+- column options (type `jsonb[]`): plugin-specific FDW column options
 
 - original column names (type `text[]`): names of the columns on the remote
   data source

@@ -621,6 +621,7 @@ BEGIN
       type_name     text    NOT NULL,
       orig_type     text    NOT NULL,
       nullable      boolean NOT NULL,
+      options       jsonb,
       default_value text,
       CONSTRAINT columns_pkey
          PRIMARY KEY (schema, table_name, column_name),
@@ -829,6 +830,7 @@ $$DECLARE
    t                       name;
    sch                     name;
    seq                     name;
+   coloptions              jsonb;
    minv                    numeric;
    maxv                    numeric;
    incr                    numeric;
@@ -848,6 +850,7 @@ $$DECLARE
    o_sch                   name;
    o_tab                   name;
    col_array               name[] := ARRAY[]::name[];
+   col_options_array       jsonb[] := ARRAY[]::jsonb[];
    fcol_array              text[] := ARRAY[]::text[];
    type_array              text[] := ARRAY[]::text[];
    null_array              boolean[] := ARRAY[]::boolean[];
@@ -978,7 +981,7 @@ BEGIN
    /* create foreign tables */
    o_sch := '';
    o_tab := '';
-   FOR sch, tab, colname, fcolname, pos, typ, nul, fsch, ftab IN
+   FOR sch, tab, colname, fcolname, pos, typ, nul, coloptions, fsch, ftab IN
       EXECUTE format(
          E'SELECT schema,\n'
           '       table_name,\n'
@@ -987,6 +990,7 @@ BEGIN
           '       pc.position,\n'
           '       pc.type_name,\n'
           '       pc.nullable,\n'
+          '       pc.options,\n'
           '       ps.orig_schema,\n'
           '       pt.orig_table\n'
           'FROM columns pc\n'
@@ -1002,11 +1006,12 @@ BEGIN
          IF o_tab <> '' THEN
             /* get the CREATE FOREIGN TABLE statement */
             EXECUTE format(
-               'SELECT %s($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+               'SELECT %s($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
                v_create_foreign_tab
             ) INTO stmt
             USING server, o_sch, o_tab, o_fsch, o_ftab,
-                  col_array, fcol_array, type_array, null_array, options;
+                  col_array, col_options_array, fcol_array,
+                  type_array, null_array, options;
             /* execute the statement and log errors */
             BEGIN
                EXECUTE stmt;
@@ -1052,6 +1057,7 @@ BEGIN
       END IF;
 
       col_array := col_array || colname;
+      col_options_array := col_options_array || coloptions;
       fcol_array := fcol_array || fcolname;
       type_array := type_array || typ;
       null_array := null_array || nul;
@@ -1061,11 +1067,12 @@ BEGIN
    IF o_tab <> '' THEN
       /* get the CREATE FOREIGN TABLE statement */
       EXECUTE format(
-         'SELECT %s($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+         'SELECT %s($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
          v_create_foreign_tab
       ) INTO stmt
       USING server, o_sch, o_tab, o_fsch, o_ftab,
-            col_array, fcol_array, type_array, null_array, options;
+            col_array, col_options_array, fcol_array,
+            type_array, null_array, options;
       /* execute the statement and log errors */
       BEGIN
          EXECUTE stmt;
