@@ -1051,13 +1051,16 @@ BEGIN
          o_fsch := fsch;
          o_ftab := ftab;
          col_array := ARRAY[]::name[];
+         col_options_array := ARRAY[]::jsonb[];
          fcol_array := ARRAY[]::text[];
          type_array := ARRAY[]::text[];
          null_array := ARRAY[]::boolean[];
       END IF;
 
       col_array := col_array || colname;
-      col_options_array := col_options_array || coloptions;
+      IF coloptions IS NOT NULL THEN
+         col_options_array := col_options_array || coloptions;
+      END IF;
       fcol_array := fcol_array || fcolname;
       type_array := type_array || typ;
       null_array := null_array || nul;
