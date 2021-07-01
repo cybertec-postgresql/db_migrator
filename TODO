@@ -1,0 +1,7 @@
+List of things to do (help welcome)
+
+- Retain the original index names (use "CREATE INDEX indexname ON"
+  rather than "CREATE INDEX ON").
+
+- Optionally retain constraint names.  Perhaps a flag in
+  "db_migrate_constraints".
