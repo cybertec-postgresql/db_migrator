@@ -761,7 +761,7 @@ BEGIN
       CONSTRAINT triggers_pkey
          PRIMARY KEY (schema, table_name, trigger_name),
       CONSTRAINT triggers_fkey
-         FOREIGN KEY (schema, table_name) REFERENCES tables
+         FOREIGN KEY (schema) REFERENCES schemas
    );
 
    CREATE TABLE table_privs (
