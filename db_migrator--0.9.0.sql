@@ -251,10 +251,11 @@ BEGIN
    CLOSE c_col;
 
    /* refresh "checks" table */
-   EXECUTE format(E'INSERT INTO checks (schema, table_name, constraint_name, "deferrable", deferred, condition)\n'
+   EXECUTE format(E'INSERT INTO checks (schema, table_name, constraint_name, orig_name, "deferrable", deferred, condition)\n'
                    '   SELECT %s(schema),\n'
                    '          %s(table_name),\n'
                    '          %s(constraint_name),\n'
+                   '          constraint_name,\n'
                    '          "deferrable",\n'
                    '          deferred,\n'
                    '          %s(condition)\n'
@@ -273,11 +274,12 @@ BEGIN
       USING only_schemas;
 
    /* refresh "foreign_keys" table */
-   EXECUTE format(E'INSERT INTO foreign_keys (schema, table_name, constraint_name, "deferrable", deferred, delete_rule,\n'
+   EXECUTE format(E'INSERT INTO foreign_keys (schema, table_name, constraint_name, orig_name, "deferrable", deferred, delete_rule,\n'
                    '                          column_name, position, remote_schema, remote_table, remote_column)\n'
                    '   SELECT %s(schema),\n'
                    '          %s(table_name),\n'
                    '          %s(constraint_name),\n'
+                   '          constraint_name,\n'
                    '          "deferrable",\n'
                    '          deferred,\n'
                    '          delete_rule,\n'
@@ -307,10 +309,11 @@ BEGIN
       USING only_schemas;
 
    /* refresh "keys" table */
-   EXECUTE format(E'INSERT INTO keys (schema, table_name, constraint_name, "deferrable", deferred, column_name, position, is_primary)\n'
+   EXECUTE format(E'INSERT INTO keys (schema, table_name, constraint_name, orig_name, "deferrable", deferred, column_name, position, is_primary)\n'
                    '   SELECT %s(schema),\n'
                    '          %s(table_name),\n'
                    '          %s(constraint_name),\n'
+                   '          constraint_name,\n'
                    '          "deferrable",\n'
                    '          deferred,\n'
                    '          %s(column_name),\n'
@@ -389,10 +392,11 @@ BEGIN
       USING only_schemas;
 
    /* refresh "indexes" table */
-   EXECUTE format(E'INSERT INTO indexes (schema, table_name, index_name, uniqueness)\n'
+   EXECUTE format(E'INSERT INTO indexes (schema, table_name, index_name, orig_name, uniqueness)\n'
                    '   SELECT DISTINCT %s(schema),\n'
                    '                   %s(table_name),\n'
                    '                   %s(index_name),\n'
+                   '                   index_name,\n'
                    '                   uniqueness\n'
                    '   FROM %I.indexes\n'
                    '   WHERE $1 IS NULL OR schema =ANY ($1)\n'
@@ -633,6 +637,7 @@ BEGIN
       schema          name    NOT NULL,
       table_name      name    NOT NULL,
       constraint_name name    NOT NULL,
+      orig_name       text    NOT NULL,
       "deferrable"    boolean NOT NULL,
       deferred        boolean NOT NULL,
       condition       text    NOT NULL,
@@ -647,6 +652,7 @@ BEGIN
       schema          name    NOT NULL,
       table_name      name    NOT NULL,
       constraint_name name    NOT NULL,
+      orig_name       text    NOT NULL,
       "deferrable"    boolean NOT NULL,
       deferred        boolean NOT NULL,
       delete_rule     text    NOT NULL,
@@ -668,6 +674,7 @@ BEGIN
       schema          name    NOT NULL,
       table_name      name    NOT NULL,
       constraint_name name    NOT NULL,
+      orig_name       text    NOT NULL,
       "deferrable"    boolean NOT NULL,
       deferred        boolean NOT NULL,
       column_name     name    NOT NULL,
@@ -721,6 +728,7 @@ BEGIN
       schema     name    NOT NULL,
       table_name name    NOT NULL,
       index_name name    NOT NULL,
+      orig_name  text    NOT NULL,
       uniqueness boolean NOT NULL,
       migrate    boolean NOT NULL DEFAULT TRUE,
       CONSTRAINT indexes_pkey
@@ -1624,7 +1632,7 @@ BEGIN
             END;
          END IF;
 
-         stmt := format('ALTER TABLE %I.%I ADD %s (', loc_s, loc_t,
+         stmt := format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s (', loc_s, loc_t, cons_name,
                         CASE WHEN prim THEN 'PRIMARY KEY' ELSE 'UNIQUE' END);
          stmt_suffix := format(')%s DEFERRABLE INITIALLY %s',
                               CASE WHEN candefer THEN '' ELSE ' NOT' END,
@@ -1731,7 +1739,7 @@ BEGIN
             END;
          END IF;
 
-         stmt := format('ALTER TABLE %I.%I ADD FOREIGN KEY (', loc_s, loc_t);
+         stmt := format('ALTER TABLE %I.%I ADD CONSTRAINT %I FOREIGN KEY (', loc_s, loc_t, cons_name);
          stmt_middle := format(') REFERENCES %I.%I (', rem_s, rem_t);
          stmt_suffix := format(') ON DELETE %s%s DEFERRABLE INITIALLY %s',
                               delrule,
@@ -1796,7 +1804,7 @@ BEGIN
         AND c.migrate
    LOOP
       BEGIN
-         EXECUTE format('ALTER TABLE %I.%I ADD CHECK(%s)', loc_s, loc_t, expr);
+         EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK (%s)', loc_s, loc_t, cons_name, expr);
       EXCEPTION
          WHEN others THEN
             /* turn the error into a warning */
@@ -1820,7 +1828,7 @@ BEGIN
                   pgstage_schema,
                   loc_s,
                   loc_t,
-                  format('ALTER TABLE %I.%I ADD CHECK(%s)', loc_s, loc_t, expr),
+                  format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK (%s)', loc_s, loc_t, cons_name, expr),
                   errmsg || coalesce(': ' || detail, '')
                );
 
@@ -1882,8 +1890,8 @@ BEGIN
             END;
          END IF;
 
-         stmt := format('CREATE %sINDEX ON %I.%I (',
-                        CASE WHEN uniq THEN 'UNIQUE ' ELSE '' END, loc_s, loc_t);
+         stmt := format('CREATE %sINDEX %I ON %I.%I (',
+                        CASE WHEN uniq THEN 'UNIQUE ' ELSE '' END, ind_name, loc_s, loc_t);
          old_s := loc_s;
          old_t := loc_t;
          old_c := ind_name;

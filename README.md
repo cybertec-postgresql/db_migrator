@@ -247,7 +247,8 @@ are done with the migration.
 - `table_name` (type `name`): table with the constraint
 
 - `constraint_name` (type `name`): name of the constraint
-  (will not be migrated)
+
+- `orig_name` (type `text`): name of the constraint in the remote data source
 
 - `deferrable` (type `boolean`): `TRUE` if the constraint can be deferred
 
@@ -273,7 +274,8 @@ are done with the migration.
 - `table_name` (type `name`): table with the constraint
 
 - `constraint_name` (type `name`): name of the constraint
-  (will not be migrated)
+
+- `orig_name` (type `text`): name of the constraint in the remote source
 
 - `deferrable` (type `boolean`): `TRUE` if the constraint can be deferred
 
@@ -300,7 +302,9 @@ are done with the migration.
 
 - `table_name` (type `name`): table with the index
 
-- `index_name` (type `name`): name of the index (will not be migrated)
+- `index_name` (type `name`): name of the index
+
+- `orig_name` (type `text`): name of the index in the remote source
 
 - `uniqueness` (type `boolean`): `TRUE` if this is a unique index
 
@@ -317,7 +321,7 @@ are done with the migration.
 
 - `table_name` (type `name`): table with the index
 
-- `index_name` (type `name`): name of the index (will not be migrated)
+- `index_name` (type `name`): name of the index
 
 - `position` (type `integer`): determines the index column order
 
