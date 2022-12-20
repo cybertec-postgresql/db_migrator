@@ -518,7 +518,6 @@ CREATE FUNCTION db_migrate_prepare(
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
 $$DECLARE
-   extschema               text;
    old_msglevel            text;
    v_plugin_schema         text;
    v_create_metadata_views regproc;
@@ -551,11 +550,6 @@ BEGIN
    old_msglevel := current_setting('client_min_messages');
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
-
-   /* get the "ora_migrator" extension schema */
-   SELECT extnamespace::regnamespace::text INTO extschema
-      FROM pg_catalog.pg_extension
-      WHERE extname = 'ora_migrator';
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating staging schemas "%" and "%" ...', staging_schema, pgstage_schema;
@@ -599,7 +593,7 @@ BEGIN
               options;
 
    /* set "search_path" to the PostgreSQL stage */
-   EXECUTE format('SET LOCAL search_path = %I, %I, %s', pgstage_schema, staging_schema, extschema);
+   EXECUTE format('SET LOCAL search_path = %I, %I, %s', pgstage_schema, staging_schema, v_plugin_schema);
 
    /* create tables in the PostgreSQL stage */
    CREATE TABLE schemas (
@@ -813,7 +807,7 @@ BEGIN
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
 
    /* copy data from the remote stage to the PostgreSQL stage */
-   EXECUTE format('SET LOCAL search_path = %s', extschema);
+   EXECUTE format('SET LOCAL search_path = %s', v_plugin_schema);
    RETURN db_migrate_refresh(plugin, staging_schema, pgstage_schema, only_schemas);
 END;$$;
 
@@ -1137,7 +1131,6 @@ $$DECLARE
    old_msglevel           text;
    v_plugin_schema        text;
    v_translate_identifier regproc;
-   extschema              text;
    sch                    name;
    tab                    name;
    rc                     integer := 0;
@@ -1149,7 +1142,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_extension
+   FROM pg_catalog.pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -1163,10 +1156,7 @@ BEGIN
            ) INTO v_translate_identifier;
 
    /* set "search_path" to the remote stage and the extension schema */
-   SELECT extnamespace::regnamespace::text INTO extschema
-      FROM pg_catalog.pg_extension
-      WHERE extname = 'ora_migrator';
-   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, extschema);
+   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
 
    /* loop through all foreign tables to be migrated */
    FOR sch, tab IN
@@ -1203,7 +1193,6 @@ $$DECLARE
    old_msglevel           text;
    v_plugin_schema        text;
    v_translate_identifier regproc;
-   extschema              text;
    sch                    name;
    fname                  name;
    src                    text;
@@ -1218,7 +1207,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_extension
+   FROM pg_catalog.pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -1232,10 +1221,7 @@ BEGIN
            ) INTO v_translate_identifier;
 
    /* set "search_path" to the remote stage and the extension schema */
-   SELECT extnamespace::regnamespace::text INTO extschema
-      FROM pg_catalog.pg_extension
-      WHERE extname = 'ora_migrator';
-   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, extschema);
+   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
 
    FOR sch, fname, src IN
       SELECT schema, function_name, source
@@ -1296,7 +1282,6 @@ $$DECLARE
    old_msglevel           text;
    v_plugin_schema        text;
    v_translate_identifier regproc;
-   extschema              text;
    sch                    name;
    tabname                name;
    trigname               name;
@@ -1316,7 +1301,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_extension
+   FROM pg_catalog.pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -1330,10 +1315,7 @@ BEGIN
            ) INTO v_translate_identifier;
 
    /* set "search_path" to the remote stage and the extension schema */
-   SELECT extnamespace::regnamespace::text INTO extschema
-      FROM pg_catalog.pg_extension
-      WHERE extname = 'ora_migrator';
-   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, extschema);
+   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
 
    FOR sch, tabname, trigname, trigtype, event, eachrow, whencl, src IN
       SELECT schema, table_name, trigger_name, trigger_type, triggering_event,
@@ -1412,7 +1394,6 @@ $$DECLARE
    old_msglevel           text;
    v_plugin_schema        text;
    v_translate_identifier regproc;
-   extschema              text;
    sch                    name;
    vname                  name;
    col                    name;
@@ -1430,7 +1411,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_extension
+   FROM pg_catalog.pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -1444,10 +1425,7 @@ BEGIN
            ) INTO v_translate_identifier;
 
    /* set "search_path" to the remote stage and the extension schema */
-   SELECT extnamespace::regnamespace::text INTO extschema
-      FROM pg_catalog.pg_extension
-      WHERE extname = 'ora_migrator';
-   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, extschema);
+   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
 
    FOR sch, vname, src IN
       SELECT schema, view_name, definition
@@ -1524,7 +1502,6 @@ $$DECLARE
    old_msglevel           text;
    v_plugin_schema        text;
    v_translate_identifier regproc;
-   extschema              text;
    stmt                   text;
    stmt_middle            text;
    stmt_suffix            text;
@@ -1560,7 +1537,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_extension
+   FROM pg_catalog.pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -1574,10 +1551,7 @@ BEGIN
            ) INTO v_translate_identifier;
 
    /* set "search_path" to the PostgreSQL staging schema and the extension schema */
-   SELECT extnamespace::regnamespace::text INTO extschema
-      FROM pg_catalog.pg_extension
-      WHERE extname = 'ora_migrator';
-   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, extschema);
+   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating UNIQUE and PRIMARY KEY constraints ...';
@@ -2034,14 +2008,17 @@ CREATE FUNCTION db_migrate(
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
 $$DECLARE
-   extschema text;
+   v_plugin_schema text;
    rc        integer := 0;
 BEGIN
+
+   /* get the plugin callback functions */
+   SELECT extnamespace::regnamespace::text INTO v_plugin_schema
+   FROM pg_catalog.pg_extension
+   WHERE extname = plugin;
+
    /* set "search_path" to the extension schema */
-   SELECT extnamespace::regnamespace::text INTO extschema
-      FROM pg_catalog.pg_extension
-      WHERE extname = 'ora_migrator';
-   EXECUTE format('SET LOCAL search_path = %s', extschema);
+   EXECUTE format('SET LOCAL search_path = %s', v_plugin_schema);
 
    /*
     * First step:
