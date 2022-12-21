@@ -885,7 +885,7 @@ BEGIN
 
    /* set "search_path" to the PostgreSQL staging schema and the extension schema */
    SELECT extnamespace::regnamespace::text INTO extschema
-      FROM pg_catalog.pg_extension
+      FROM pg_extension
       WHERE extname = 'db_migrator';
    EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, extschema);
 
@@ -1142,7 +1142,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_catalog.pg_extension
+   FROM pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -1207,7 +1207,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_catalog.pg_extension
+   FROM pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -1301,7 +1301,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_catalog.pg_extension
+   FROM pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -1413,7 +1413,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_catalog.pg_extension
+   FROM pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -1539,7 +1539,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_catalog.pg_extension
+   FROM pg_extension
    WHERE extname = plugin;
 
    IF NOT FOUND THEN
@@ -2016,7 +2016,7 @@ BEGIN
 
    /* get the plugin callback functions */
    SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_catalog.pg_extension
+   FROM pg_extension
    WHERE extname = plugin;
 
    /* set "search_path" to the extension schema */
