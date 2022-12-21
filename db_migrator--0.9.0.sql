@@ -1325,8 +1325,9 @@ BEGIN
    LOOP
       BEGIN
          /* create the trigger function */
-         EXECUTE format(E'CREATE FUNCTION %I.%I() RETURNS trigger LANGUAGE plpgsql AS\n$_f_$%s$_f_$',
-                        sch, trigname, src);
+         EXECUTE format(E'CREATE FUNCTION %I.%I() RETURNS trigger\n'
+                        '   LANGUAGE plpgsql SET search_path = %L AS\n$_f_$%s$_f_$',
+                        sch, trigname, sch, src);
          /* create the trigger itself */
          EXECUTE format(E'CREATE TRIGGER %I %s %s ON %I.%I FOR EACH %s\n'
                         '   EXECUTE PROCEDURE %I.%I()',
@@ -1359,8 +1360,9 @@ BEGIN
                   pgstage_schema,
                   sch,
                   tabname,
-                  format(E'CREATE FUNCTION %I.%I() RETURNS trigger LANGUAGE plpgsql AS\n$_f_$%s$_f_$',
-                         sch, trigname, src) || E';\n' ||
+                  format(E'CREATE FUNCTION %I.%I() RETURNS trigger\n'
+                         '   LANGUAGE plpgsql SET search_path = %L AS\n$_f_$%s$_f_$',
+                         sch, trigname, sch, src) || E';\n' ||
                   format(E'CREATE TRIGGER %I %s %s ON %I.%I FOR EACH %s\n'
                          '   EXECUTE PROCEDURE %I.%I()',
                          trigname,
