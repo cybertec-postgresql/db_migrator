@@ -1023,7 +1023,7 @@ BEGIN
                   GET STACKED DIAGNOSTICS
                      errmsg := MESSAGE_TEXT,
                      detail := PG_EXCEPTION_DETAIL;
-                  RAISE WARNING 'Error creating foreign table %.%', sch, tab
+                  RAISE WARNING 'Error creating foreign table %.%', o_sch, o_tab
                      USING DETAIL = errmsg || coalesce(': ' || detail, '');
 
                   EXECUTE
@@ -1038,8 +1038,8 @@ BEGIN
                         '   %L\n'
                         ')',
                         pgstage_schema,
-                        sch,
-                        tab,
+                        o_sch,
+                        o_tab,
                         stmt,
                         errmsg || coalesce(': ' || detail, '')
                      );
@@ -1087,7 +1087,7 @@ BEGIN
             GET STACKED DIAGNOSTICS
                errmsg := MESSAGE_TEXT,
                detail := PG_EXCEPTION_DETAIL;
-            RAISE WARNING 'Error creating foreign table %.%', sch, tab
+            RAISE WARNING 'Error creating foreign table %.%', o_sch, o_tab
                USING DETAIL = errmsg || coalesce(': ' || detail, '');
 
             EXECUTE
@@ -1102,8 +1102,8 @@ BEGIN
                   '   %L\n'
                   ')',
                   pgstage_schema,
-                  sch,
-                  tab,
+                  o_sch,
+                  o_tab,
                   stmt,
                   errmsg || coalesce(': ' || detail, '')
                );
