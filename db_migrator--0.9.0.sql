@@ -250,7 +250,12 @@ BEGIN
 
    CLOSE c_col;
 
-   /* refresh "checks" table */
+   /* Refresh "checks" table.
+    * Don't migrate constraints of the form "col IS NOT NULL", because these
+    * should cause the "nullable" column in "columns" to be set, and we'd
+    * rather define the column as NOT NULL than create a (possible redundant)
+    * CHECK constraint.
+    */
    EXECUTE format(E'INSERT INTO checks (schema, table_name, constraint_name, orig_name, "deferrable", deferred, condition)\n'
                    '   SELECT %s(schema),\n'
                    '          %s(table_name),\n'
@@ -261,7 +266,7 @@ BEGIN
                    '          %s(condition)\n'
                    '   FROM %I.checks\n'
                    '   WHERE ($1 IS NULL OR schema =ANY ($1))\n'
-                   '     AND condition !~ ''^"[^"]*" IS NOT NULL$''\n'
+                   '     AND condition !~* ''^([[:alnum:]_]*|"[^"]*") IS NOT NULL$''\n'
                    'ON CONFLICT ON CONSTRAINT checks_pkey DO UPDATE SET\n'
                    '   "deferrable" = EXCLUDED."deferrable",\n'
                    '   deferred     = EXCLUDED.deferred,\n'
