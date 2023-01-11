@@ -940,8 +940,11 @@ BEGIN
          FROM sequences
    LOOP
       BEGIN
-      EXECUTE format('CREATE SEQUENCE %I.%I INCREMENT %s MINVALUE %s MAXVALUE %s START %s CACHE %s %sCYCLE',
-                     sch, seq, incr, minv, maxv, lastval + 1, cachesiz,
+      EXECUTE format('CREATE SEQUENCE %I.%I INCREMENT %s %s %s START %s CACHE %s %sCYCLE',
+                     sch, seq, incr,
+                     CASE WHEN minv IS NULL THEN 'NO MINVALUE' ELSE 'MINVALUE ' || minv END,
+                     CASE WHEN maxv IS NULL THEN 'NO MAXVALUE' ELSE 'MAXVALUE ' || maxv END,
+                     lastval + 1, cachesiz,
                      CASE WHEN cycl THEN '' ELSE 'NO ' END);
       EXCEPTION
          WHEN others THEN
@@ -966,8 +969,11 @@ BEGIN
                   pgstage_schema,
                   sch,
                   seq,
-                  format('CREATE SEQUENCE %I.%I INCREMENT %s MINVALUE %s MAXVALUE %s START %s CACHE %s %sCYCLE',
-                         sch, seq, incr, minv, maxv, lastval + 1, cachesiz,
+                  format('CREATE SEQUENCE %I.%I INCREMENT %s %s %s START %s CACHE %s %sCYCLE',
+                         sch, seq, incr,
+                         CASE WHEN minv IS NULL THEN 'NO MINVALUE' ELSE 'MINVALUE ' || minv END,
+                         CASE WHEN maxv IS NULL THEN 'NO MAXVALUE' ELSE 'MAXVALUE ' || maxv END,
+                         lastval + 1, cachesiz,
                          CASE WHEN cycl THEN '' ELSE 'NO ' END),
                   errmsg || coalesce(': ' || detail, '')
                );
