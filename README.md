@@ -11,6 +11,7 @@ to the targeted data source.
 Currently, plugins exist for the following data sources:
 
 - **Oracle**: [`ora_migrator`][ora_migrator]
+- **MySQL/MariaDB**: [`mysql_migrator`][mysql_migrator]
 
 See the section [Plugin API](#plugin-api) below if you want to develop a
 plugin (I'd be happy to add it to the list above).
@@ -22,6 +23,7 @@ See [Setup](#setup) below for installation instructions,
  [ext]: https://www.postgresql.org/docs/current/extend-extensions.html
  [fdw]: https://www.postgresql.org/docs/current/ddl-foreign-data.html
  [ora_migrator]: https://github.com/cybertec-postgresql/ora_migrator
+ [mysql_migrator]: https://github.com/fljdin/mysql_migrator
 
 Showcase
 ========
