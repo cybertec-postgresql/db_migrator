@@ -953,6 +953,10 @@ and the `views` table.
 
 - `condition` is the SQL expression that defines the check constraint
 
+  `db_migrator` will not migrate check constraints of the form
+  `col IS NOT NULL`.  You should make sure that `columns.nullable` is FALSE
+  for such columns.
+
 ### table of primary key and unique constraint columns ###
 
     keys (

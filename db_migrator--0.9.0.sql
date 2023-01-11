@@ -251,10 +251,9 @@ BEGIN
    CLOSE c_col;
 
    /* Refresh "checks" table.
-    * Don't migrate constraints of the form "col IS NOT NULL", because these
-    * should cause the "nullable" column in "columns" to be set, and we'd
-    * rather define the column as NOT NULL than create a (possible redundant)
-    * CHECK constraint.
+    * Don't migrate constraints of the form "col IS NOT NULL", because we expect
+    * "columns.nullable" to be FALSE in that case, and we'd rather define the
+    * column as NOT NULL than create a (possibly redundant) CHECK constraint.
     */
    EXECUTE format(E'INSERT INTO checks (schema, table_name, constraint_name, orig_name, "deferrable", deferred, condition)\n'
                    '   SELECT %s(schema),\n'
