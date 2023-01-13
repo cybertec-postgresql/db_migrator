@@ -337,6 +337,64 @@ are done with the migration.
 
   Modify this column if desired.
 
+### `partitions` ###
+
+- `schema` (type `name`): schema of the table with the partition
+
+- `table_name` (type `name`): name of the related table
+
+- `partition_name` (type `name`): name of the partition
+
+- `orig_name` (type `name`): name of the partition in the remote source
+
+- `type` (type `text`): one of the supported partitioning methods `LIST`,
+  `RANGE` or `HASH`
+
+- `expression` (type `text`): partitioning expression used to define a table's
+  partitioning
+
+- `position` (type `integer`): defines the order of the table partitions (must
+  start at 1)
+
+- `values` (type `text`): for a `RANGE` method, contains the upper bound value,
+  for a `LIST` method, contains a list of comma-separated values
+
+- `is_default` (type `boolean`, default `FALSE`); `TRUE` if it is the default
+  partition 
+
+- `migrate` (type `boolean`, default `TRUE`): `TRUE` if the constraint should
+  be migrated
+
+### `subpartitions` ###
+
+- `schema` (type `name`): schema of the table with the partition
+
+- `table_name` (type `name`): name of the related table
+
+- `partition_name` (type `name`): name of the parent partition
+
+- `subpartition_name` (type `name`): name of the subpartitions
+
+- `orig_name` (type `name`): name of the subpartition in the remote source
+
+- `type` (type `text`): one of the supported partitioning methods `LIST`,
+  `RANGE` or `HASH`
+
+- `expression` (type `text`): partitioning expression used to define a table's
+  composite partitioning
+
+- `position` (type `integer`): defines the order of the table subpartitions
+  (must start at 1)
+
+- `values` (type `text`): for a `RANGE` method, contains the upper bound value,
+  for a `LIST` method, contains a list of comma-separated values
+
+- `is_default` (type `boolean`, default `FALSE`); `TRUE` if it is the default
+  subpartition 
+
+- `migrate` (type `boolean`, default `TRUE`): `TRUE` if the constraint should
+  be migrated
+
 ### `views` ###
 
 - `schema` (type `name`): schema of the table with the view
@@ -678,6 +736,9 @@ Parameters:
 
 This function replaces a single foreign table created by `db_migrate_mkforeign`
 with an actual table.
+If any partition scheme exists in `partitions` or `subpartitions` tables, table
+will materialized as a partitioned table with partitions, while `migrate` are
+set to `TRUE`.
 The table data are migrated unless `with_data` is `FALSE`.
 
 You don't need this function if you use `db_migrate_tables`.  It is provided as
@@ -1073,6 +1134,46 @@ The columns of the view are defines in the `columns` table.
   rather than an expression
 
 - `column_name` is the indexed column name or expression
+
+### table of partitions ###
+
+    partitions (
+        schema         name    NOT NULL,
+        table_name     name    NOT NULL,
+        partition_name name    NOT NULL,
+        type           text    NOT NULL,
+        expression     text    NOT NULL,
+        position       integer NOT NULL,
+        values         text,
+        is_default     boolean NOT NULL
+    )
+
+- `type` is one of the supported partitioning methods `LIST`, `RANGE` or `HASH`
+
+- `expression` is used to define a table's partitioning
+
+- `position` defines the order of the table partitions (must start at 1)
+
+- `values` contains the upper bound value for a `RANGE` method or a list of
+  comma-separated values for a `LIST` method
+
+- `is_default` is `TRUE` if it is the default partition 
+
+### table of subpartitions ###
+
+    subpartitions (
+        schema            name    NOT NULL,
+        table_name        name    NOT NULL,
+        partition_name    name    NOT NULL,
+        subpartition_name name    NOT NULL,
+        type              text    NOT NULL,
+        expression        text    NOT NULL,
+        position          integer NOT NULL,
+        values            text,
+        is_default        boolean NOT NULL
+    )
+
+Same explanations as `partitions` above.
 
 ### table of triggers ###
 
