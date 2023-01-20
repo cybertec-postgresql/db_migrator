@@ -339,9 +339,9 @@ are done with the migration.
 
 ### `partitions` ###
 
-- `schema` (type `name`): schema of the table with the partition
+- `schema` (type `name`): schema of the partitioned table
 
-- `table_name` (type `name`): name of the related table
+- `table_name` (type `name`): name of the partitioned table
 
 - `partition_name` (type `name`): name of the partition
 
@@ -362,18 +362,18 @@ are done with the migration.
 - `is_default` (type `boolean`, default `FALSE`); `TRUE` if it is the default
   partition 
 
-- `migrate` (type `boolean`, default `TRUE`): `TRUE` if the constraint should
+- `migrate` (type `boolean`, default `TRUE`): `TRUE` if the partition should
   be migrated
 
 ### `subpartitions` ###
 
-- `schema` (type `name`): schema of the table with the partition
+- `schema` (type `name`): schema of the partitioned table
 
-- `table_name` (type `name`): name of the related table
+- `table_name` (type `name`): name of the partitioned table
 
 - `partition_name` (type `name`): name of the parent partition
 
-- `subpartition_name` (type `name`): name of the subpartitions
+- `subpartition_name` (type `name`): name of the subpartition
 
 - `orig_name` (type `name`): name of the subpartition in the remote source
 
@@ -392,7 +392,7 @@ are done with the migration.
 - `is_default` (type `boolean`, default `FALSE`); `TRUE` if it is the default
   subpartition 
 
-- `migrate` (type `boolean`, default `TRUE`): `TRUE` if the constraint should
+- `migrate` (type `boolean`, default `TRUE`): `TRUE` if the partition should
   be migrated
 
 ### `views` ###
