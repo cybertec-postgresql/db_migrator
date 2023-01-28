@@ -353,17 +353,11 @@ are done with the migration.
 - `expression` (type `text`): partitioning expression used to define a table's
   partitioning
 
-- `position` (type `integer`): defines the order of the table partitions (must
-  start at 1)
-
-- `values` (type `text`): for a `RANGE` method, contains the upper bound value,
-  for a `LIST` method, contains a list of comma-separated values
+- `values` (type `text[]`): partition bound specifications depending on
+  partition type
 
 - `is_default` (type `boolean`, default `FALSE`); `TRUE` if it is the default
-  partition 
-
-- `migrate` (type `boolean`, default `TRUE`): `TRUE` if the partition should
-  be migrated
+  partition
 
 ### `subpartitions` ###
 
@@ -383,17 +377,11 @@ are done with the migration.
 - `expression` (type `text`): partitioning expression used to define a table's
   composite partitioning
 
-- `position` (type `integer`): defines the order of the table subpartitions
-  (must start at 1)
-
-- `values` (type `text`): for a `RANGE` method, contains the upper bound value,
-  for a `LIST` method, contains a list of comma-separated values
+- `values` (type `text[]`): partition bound specifications depending on
+  partition type
 
 - `is_default` (type `boolean`, default `FALSE`); `TRUE` if it is the default
-  subpartition 
-
-- `migrate` (type `boolean`, default `TRUE`): `TRUE` if the partition should
-  be migrated
+  subpartition
 
 ### `views` ###
 
@@ -1143,21 +1131,26 @@ The columns of the view are defines in the `columns` table.
         partition_name name    NOT NULL,
         type           text    NOT NULL,
         expression     text    NOT NULL,
-        position       integer NOT NULL,
-        values         text,
-        is_default     boolean NOT NULL
+        is_default     boolean NOT NULL,
+        values         text[]
     )
 
 - `type` is one of the supported partitioning methods `LIST`, `RANGE` or `HASH`
 
 - `expression` is used to define a table's partitioning
 
-- `position` defines the order of the table partitions (must start at 1)
-
-- `values` contains the upper bound value for a `RANGE` method or a list of
-  comma-separated values for a `LIST` method
+- `values` are partition bound specifications depending on partition type
 
 - `is_default` is `TRUE` if it is the default partition 
+
+With `LIST` partitioning, `values` contains a list of properly quoted values, as
+it can store any data type, like integer, varchar or even expressions.
+
+With `RANGE` partitioning, `values` must be a two-value array to define preperly
+quoted boundaries, like `[lower, upper]`.
+
+With `HASH` partitioning, `values` must be a two-integer array, like `[modulus,
+remainder]`.
 
 ### table of subpartitions ###
 
@@ -1168,9 +1161,8 @@ The columns of the view are defines in the `columns` table.
         subpartition_name name    NOT NULL,
         type              text    NOT NULL,
         expression        text    NOT NULL,
-        position          integer NOT NULL,
-        values            text,
-        is_default        boolean NOT NULL
+        is_default        boolean NOT NULL,
+        values            text[]
     )
 
 Same explanations as `partitions` above.

@@ -34,12 +34,7 @@ $$DECLARE
    v_subpartition     text;
    v_type             text;
    v_exp              text;
-   v_pos              int;
-   v_lastpos          int;
-   v_values           text;
-   v_lowervalues      text;
-   v_subvalues        text;
-   v_sublowvalues     text;
+   v_values           text[];
    v_default          boolean;
 BEGIN
    BEGIN
@@ -52,32 +47,21 @@ BEGIN
       stmt := format('CREATE TABLE %I.%I (LIKE %I.%I)', schema, table_name, schema, ft);
 
       OPEN cur_partitions FOR EXECUTE format($stmt$
-         SELECT schema, table_name, partition_name,
-               type, expression, position, values, is_default
-            FROM %I.partitions WHERE table_name = $1 AND migrate
-            ORDER BY position $stmt$, pgstage_schema)
-         USING table_name;
+         SELECT schema, table_name, partition_name, 
+               type, expression, is_default, values
+            FROM %I.partitions 
+            WHERE schema = $1 AND table_name = $2
+            $stmt$, pgstage_schema)
+         USING schema, table_name;
 
       FETCH cur_partitions INTO
          v_schema, v_table, v_partition,
-         v_type, v_exp, v_pos, v_values, v_default;
+         v_type, v_exp, v_default, v_values;
 
       with_partitions := FOUND;
 
       /* create table as a partitioned table */
       IF with_partitions THEN
-         IF (v_type = 'HASH') THEN
-            /* retrieve the last partition definition */
-            FETCH LAST FROM cur_partitions INTO
-               v_schema, v_table, v_partition,
-               v_type, v_exp, v_lastpos, v_values, v_default;
-
-            /* go back to the first row */
-            FETCH FIRST FROM cur_partitions INTO
-               v_schema, v_table, v_partition,
-               v_type, v_exp, v_pos, v_values, v_default;
-         END IF;
-
          stmt := format('%s PARTITION BY %s (%s)', stmt, v_type, v_exp);
       END IF;
       EXECUTE stmt;
@@ -92,15 +76,15 @@ BEGIN
                   WHEN v_default THEN 'DEFAULT'
                   WHEN v_type = 'LIST' THEN format(
                      'FOR VALUES IN (%s)', 
-                     v_values
+                     array_to_string(v_values, ',')
                   )
                   WHEN v_type = 'RANGE' THEN format(
                      'FOR VALUES FROM (%s) TO (%s)',
-                     coalesce(v_lowervalues, 'MINVALUE'), v_values
+                     v_values[1], v_values[2]
                   )
                   WHEN v_type = 'HASH' THEN format(
-                     'FOR VALUES WITH (modulus %s, remainder %s)', 
-                     v_lastpos, v_pos - 1
+                     'FOR VALUES WITH (modulus %s, remainder %s)',
+                     v_values[1], v_values[2]
                   )
                END
             );
@@ -108,31 +92,19 @@ BEGIN
             /* create subpartition */
             OPEN cur_subpartitions FOR EXECUTE format($stmt$
                SELECT schema, table_name, partition_name, subpartition_name,
-                     type, expression, position, values, is_default
-                  FROM %I.subpartitions 
-                  WHERE table_name = $1 AND partition_name = $2 AND migrate
-                  ORDER BY position $stmt$, pgstage_schema)               
-               USING table_name, v_partition;
+                     type, expression, is_default, values
+                  FROM %I.subpartitions
+                  WHERE schema = $1 AND table_name = $2 AND partition_name = $3
+                  $stmt$, pgstage_schema)               
+               USING schema, table_name, v_partition;
 
             FETCH cur_subpartitions INTO
                v_schema, v_table, v_partition, v_subpartition,
-               v_type, v_exp, v_pos, v_subvalues, v_default;
+               v_type, v_exp, v_default, v_values;
 
             with_subpartitions := FOUND;
 
             IF with_subpartitions THEN
-               IF (v_type = 'HASH') THEN
-                  /* retrieve the last subpartition definition */
-                  FETCH LAST FROM cur_subpartitions INTO
-                     v_schema, v_table, v_partition, v_subpartition,
-                     v_type, v_exp, v_lastpos, v_subvalues, v_default;
-
-                  /* go back to the first row */
-                  FETCH FIRST FROM cur_subpartitions INTO
-                     v_schema, v_table, v_partition, v_subpartition,
-                     v_type, v_exp, v_pos, v_subvalues, v_default;
-               END IF;
-
                stmt := format('%s PARTITION BY %s (%s)', stmt, v_type, v_exp);
             END IF;
             EXECUTE stmt;
@@ -146,37 +118,32 @@ BEGIN
                         WHEN v_default THEN 'DEFAULT'
                         WHEN v_type = 'LIST' THEN format(
                            'FOR VALUES IN (%s)', 
-                           v_values
+                           array_to_string(v_values, ',')
                         )
                         WHEN v_type = 'RANGE' THEN format(
                            'FOR VALUES FROM (%s) TO (%s)',
-                           coalesce(v_sublowvalues, 'MINVALUE'), v_subvalues
+                           v_values[1], v_values[2]
                         )
                         WHEN v_type = 'HASH' THEN format(
-                           'FOR VALUES WITH (modulus %s, remainder %s)', 
-                           v_lastpos, v_pos - 1
+                           'FOR VALUES WITH (modulus %s, remainder %s)',
+                           v_values[1], v_values[2]
                         )
                      END
                   );
                   EXECUTE stmt;
 
-                  v_sublowvalues := v_subvalues;
-
                   FETCH FROM cur_subpartitions INTO
                      v_schema, v_table, v_partition, v_subpartition,
-                     v_type, v_exp, v_pos, v_subvalues;
+                     v_type, v_exp, v_default, v_values;
                   EXIT WHEN NOT FOUND;
                END LOOP;
             END IF;
 
             CLOSE cur_subpartitions;
-
-            v_lowervalues := v_values;
-            v_sublowvalues := null;
             
             FETCH cur_partitions INTO
                v_schema, v_table, v_partition,
-               v_type, v_exp, v_pos, v_values, v_default;
+               v_type, v_exp, v_default, v_values;
 
             EXIT WHEN NOT FOUND;
          END LOOP;
@@ -591,17 +558,18 @@ BEGIN
 
    /* refresh "partitions" table */
    EXECUTE format(E'INSERT INTO partitions (schema, table_name, partition_name, orig_name,\n'
-                   '                        type, expression, position, values, is_default)\n'
+                   '                        type, expression, is_default, values)\n'
                    '   SELECT %1$s(schema),\n'
                    '          %1$s(table_name),\n'
                    '          %1$s(partition_name),\n'
                    '          partition_name,\n'
-                   '          type, expression, position, values, is_default\n'
+                   '          type, expression, is_default, values\n'
                    '   FROM %2$I.partitions\n'
                    '   WHERE $1 IS NULL OR schema = ANY($1)\n'
                    'ON CONFLICT ON CONSTRAINT partitions_pkey DO UPDATE SET\n'
                    '   type       = EXCLUDED.type,\n'
                    '   expression = EXCLUDED.expression,\n'
+                   '   is_default = EXCLUDED.is_default,\n'
                    '   values     = EXCLUDED.values',
                    v_translate_identifier,
                    staging_schema) 
@@ -609,18 +577,19 @@ BEGIN
 
    /* refresh "subpartitions" table */
    EXECUTE format(E'INSERT INTO subpartitions (schema, table_name, partition_name, subpartition_name,\n'
-                   '                           orig_name, type, expression, position, values, is_default)\n'
+                   '                           orig_name, type, expression, is_default, values)\n'
                    '   SELECT %1$s(schema),\n'
                    '          %1$s(table_name),\n'
                    '          %1$s(partition_name),\n'
                    '          %1$s(subpartition_name),\n'
                    '          subpartition_name,\n'
-                   '          type, expression, position, values, is_default\n'
+                   '          type, expression, is_default, values\n'
                    '   FROM %2$I.subpartitions\n'
                    '   WHERE $1 IS NULL OR schema = ANY($1)\n'
                    'ON CONFLICT ON CONSTRAINT subpartitions_pkey DO UPDATE SET\n'
                    '   type       = EXCLUDED.type,\n'
                    '   expression = EXCLUDED.expression,\n'
+                   '   is_default = EXCLUDED.is_default,\n'
                    '   values     = EXCLUDED.values',
                    v_translate_identifier,
                    staging_schema) 
@@ -950,10 +919,8 @@ BEGIN
       orig_name      name NOT NULL,
       type           text NOT NULL,
       expression     text NOT NULL,
-      position       integer NOT NULL,
-      values         text,
       is_default     boolean NOT NULL DEFAULT TRUE,
-      migrate        boolean NOT NULL DEFAULT TRUE,
+      values         text[],
       CONSTRAINT partitions_pkey
          PRIMARY KEY (schema, table_name, partition_name),
       CONSTRAINT partitions_fkey
@@ -970,10 +937,8 @@ BEGIN
       orig_name         name NOT NULL,
       type              text NOT NULL,
       expression        text NOT NULL,
-      position          integer NOT NULL,
-      values            text,
       is_default        boolean NOT NULL DEFAULT TRUE,
-      migrate           boolean NOT NULL DEFAULT TRUE,
+      values            text[],
       CONSTRAINT subpartitions_pkey
          PRIMARY KEY (schema, table_name, partition_name, subpartition_name),
       CONSTRAINT subpartitions_fkey
