@@ -563,15 +563,20 @@ BEGIN
                    '          %1$s(table_name),\n'
                    '          %1$s(partition_name),\n'
                    '          partition_name,\n'
-                   '          type, expression, is_default, values\n'
-                   '   FROM %2$I.partitions\n'
+                   '          type, expression, is_default,\n'
+                   '          array_agg(%2$s(value) ORDER BY pos)\n'
+                   '   FROM %3$I.partitions\n'
+                   '   CROSS JOIN unnest(values) WITH ORDINALITY AS i (value, pos)\n'
                    '   WHERE $1 IS NULL OR schema = ANY($1)\n'
+                   '   GROUP BY schema, table_name, partition_name,\n'
+                   '            type, expression, is_default\n'
                    'ON CONFLICT ON CONSTRAINT partitions_pkey DO UPDATE SET\n'
                    '   type       = EXCLUDED.type,\n'
                    '   expression = EXCLUDED.expression,\n'
                    '   is_default = EXCLUDED.is_default,\n'
                    '   values     = EXCLUDED.values',
                    v_translate_identifier,
+                   v_translate_expression,
                    staging_schema) 
    USING only_schemas;
 
@@ -583,15 +588,20 @@ BEGIN
                    '          %1$s(partition_name),\n'
                    '          %1$s(subpartition_name),\n'
                    '          subpartition_name,\n'
-                   '          type, expression, is_default, values\n'
-                   '   FROM %2$I.subpartitions\n'
+                   '          type, expression, is_default,\n'
+                   '          array_agg(%2$s(value) ORDER BY pos)\n'
+                   '   FROM %3$I.subpartitions\n'
+                   '   CROSS JOIN unnest(values) WITH ORDINALITY AS i (value, pos)\n'
                    '   WHERE $1 IS NULL OR schema = ANY($1)\n'
+                   '   GROUP BY schema, table_name, partition_name, subpartition_name,\n'
+                   '            type, expression, is_default\n'
                    'ON CONFLICT ON CONSTRAINT subpartitions_pkey DO UPDATE SET\n'
                    '   type       = EXCLUDED.type,\n'
                    '   expression = EXCLUDED.expression,\n'
                    '   is_default = EXCLUDED.is_default,\n'
                    '   values     = EXCLUDED.values',
                    v_translate_identifier,
+                   v_translate_expression,
                    staging_schema) 
    USING only_schemas;
 
