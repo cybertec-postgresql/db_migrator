@@ -339,6 +339,68 @@ are done with the migration.
 
   Modify this column if desired.
 
+### `partitions` ###
+
+Delete rows from this table if you don't want a partitioned table in PostgreSQL.
+
+- `schema` (type `name`): schema of the partitioned table
+
+- `table_name` (type `name`): name of the partitioned table
+
+- `partition_name` (type `name`): name of the partition
+
+- `orig_name` (type `name`): name of the partition in the remote source
+
+- `type` (type `text`): one of the supported partitioning methods `LIST`,
+  `RANGE` or `HASH`
+
+- `key` (type `text`): column name or expression used as partitioning key
+
+- `values` (type `text[]`): partition bound specifications
+
+- `values` are partition bound specifications
+
+  - for list partitioning, `values` contains the list
+
+  - for range partitioning, `values` contains the lower and upper bound (where
+    the lower end is included, but the upper end is excluded)
+
+  - for hash partitioning, the only entry in `values` is the remainder for this
+    partition
+
+  Non-numeric values like timestamps have to be quoted as string constants
+  (for example `ARRAY['''2022-01-01''','''2023-01-01''']`).
+
+- `is_default` (type `boolean`, default `FALSE`); `TRUE` if it is the default
+  partition
+
+### `subpartitions` ###
+
+Delete rows from this table if you don't want a subpartitioned table in
+PostgreSQL.
+
+- `schema` (type `name`): schema of the partitioned table
+
+- `table_name` (type `name`): name of the partitioned table
+
+- `partition_name` (type `name`): name of the parent partition
+
+- `subpartition_name` (type `name`): name of the subpartition
+
+- `orig_name` (type `name`): name of the subpartition in the remote source
+
+- `type` (type `text`): one of the supported partitioning methods `LIST`,
+  `RANGE` or `HASH`
+
+- `key` (type `text`): column name or expression used as partitioning key
+
+- `values` (type `text[]`): partition bound specifications
+
+  See the documentation of `values` for the `partitions` table above.
+
+- `is_default` (type `boolean`, default `FALSE`); `TRUE` if it is the default
+  subpartition
+
 ### `views` ###
 
 - `schema` (type `name`): schema of the table with the view
@@ -680,6 +742,9 @@ Parameters:
 
 This function replaces a single foreign table created by `db_migrate_mkforeign`
 with an actual table.
+If there are any entries for this table in the `partitions` tables, the table
+will be created as a partitioned table.  Subpartitions are created if there are
+corresponding entries in `subpartitions`.
 The table data are migrated unless `with_data` is `FALSE`.
 
 You don't need this function if you use `db_migrate_tables`.  It is provided as
@@ -1013,6 +1078,52 @@ For a multi-column constraint, the table will have one row per column.
 - `position` defines the order of columns in a multi-column constraint
 
 For a multi-column constraint, the table will have one row per column.
+
+### table of partitions ###
+
+    partitions (
+        schema         name    NOT NULL,
+        table_name     name    NOT NULL,
+        partition_name name    NOT NULL,
+        type           text    NOT NULL,
+        key            text    NOT NULL,
+        is_default     boolean NOT NULL,
+        values         text[]
+    )
+
+- `type` is one of the supported partitioning methods `LIST`, `RANGE` or `HASH`
+
+- `key` column name or expression that defines the partitioning key
+
+- `values` are partition bound specifications
+
+  - for list partitioning, `values` contains the list
+
+  - for range partitioning, `values` contains the lower and upper bound (where
+    the lower end is included, but the upper end is excluded)
+
+  - for hash partitioning, the only entry in `values` is the remainder for this
+    partition
+
+  Non-numeric values like timestamps have to be quoted as string constants
+  (for example `ARRAY['''2022-01-01''','''2023-01-01''']`).
+
+- `is_default` is `TRUE` if it is the default partition
+
+### table of subpartitions ###
+
+    subpartitions (
+        schema            name    NOT NULL,
+        table_name        name    NOT NULL,
+        partition_name    name    NOT NULL,
+        subpartition_name name    NOT NULL,
+        type              text    NOT NULL,
+        key               text    NOT NULL,
+        is_default        boolean NOT NULL,
+        values            text[]
+    )
+
+For explanations, see `partitions` above.
 
 ### table of views ###
 

@@ -20,25 +20,169 @@ CREATE FUNCTION materialize_foreign_table(
 ) RETURNS boolean
    LANGUAGE plpgsql VOLATILE STRICT SET search_path = pg_catalog AS
 $$DECLARE
-   ft     name;
-   errmsg text;
-   detail text;
+   ft                 name;
+   stmt               text;
+   errmsg             text;
+   detail             text;
+   cur_partitions     refcursor;
+   cur_subpartitions  refcursor;
+   partition_count    integer;
+   subpartition_count integer;
+   v_schema           text;
+   v_table            text;
+   v_partition        text;
+   v_subpartition     text;
+   v_type             text;
+   v_exp              text;
+   v_values           text[];
+   v_default          boolean;
 BEGIN
    BEGIN
       /* rename the foreign table */
       ft := substr(table_name, 1, 62) || E'\x07';
-      EXECUTE format('ALTER FOREIGN TABLE %I.%I RENAME TO %I', schema, table_name, ft);
+      stmt := format('ALTER FOREIGN TABLE %I.%I RENAME TO %I', schema, table_name, ft);
+      EXECUTE stmt;
 
-      /* create a table */
-      EXECUTE format('CREATE TABLE %I.%I (LIKE %I.%I)', schema, table_name, schema, ft);
+      /* start a CREATE TABLE statement */
+      stmt := format('CREATE TABLE %I.%I (LIKE %I.%I)', schema, table_name, schema, ft);
+
+      /* cursor for partitions */
+      OPEN cur_partitions FOR EXECUTE
+         format(
+            E'SELECT schema, table_name, partition_name, type, key, is_default, values\n'
+            'FROM %I.partitions\n'
+            'WHERE schema = $1 AND table_name = $2',
+            pgstage_schema
+         )
+         USING schema, table_name;
+
+      /* the number of result rows is the partition count */
+      MOVE FORWARD ALL IN cur_partitions;
+      GET DIAGNOSTICS partition_count = ROW_COUNT;
+      MOVE ABSOLUTE 0 IN cur_partitions;
+
+      FETCH cur_partitions INTO
+         v_schema, v_table, v_partition,
+         v_type, v_exp, v_default, v_values;
+
+      /* add a partitioning clause if appropriate */
+      IF partition_count > 0 THEN
+         stmt := format('%s PARTITION BY %s (%s)', stmt, v_type, v_exp);
+      END IF;
+
+      /* create the table */
+      EXECUTE stmt;
+
+      /* iterate through the table's partitions (first one is already fetched) */
+      IF partition_count > 0 THEN
+         LOOP
+            stmt := format(
+                       'CREATE TABLE %1$I.%3$I PARTITION OF %1$I.%2$I %4$s',
+                       v_schema, v_table, v_partition,
+                       CASE WHEN v_default
+                            THEN 'DEFAULT'
+                            WHEN v_type = 'LIST'
+                            THEN format(
+                                    'FOR VALUES IN (%s)',
+                                    array_to_string(v_values, ',')
+                                 )
+                            WHEN v_type = 'RANGE'
+                            THEN format(
+                                    'FOR VALUES FROM (%s) TO (%s)',
+                                    v_values[1], v_values[2]
+                                 )
+                            WHEN v_type = 'HASH'
+                            THEN format(
+                                    'FOR VALUES WITH (modulus %s, remainder %s)',
+                                    partition_count, v_values[1]
+                                 )
+                       END
+                    );
+
+            /* cursor for the partition's subpartitions */
+            OPEN cur_subpartitions FOR EXECUTE
+               format(
+                  E'SELECT schema, table_name, partition_name, subpartition_name, type, key, is_default, values\n'
+                  'FROM %I.subpartitions\n'
+                  'WHERE schema = $1 AND table_name = $2 AND partition_name = $3',
+                  pgstage_schema
+               )
+               USING schema, table_name, v_partition;
+
+            /* the number of result rows is the sub partition count */
+            MOVE FORWARD ALL IN cur_subpartitions;
+            GET DIAGNOSTICS subpartition_count = ROW_COUNT;
+            MOVE ABSOLUTE 0 IN cur_subpartitions;
+
+            FETCH cur_subpartitions INTO
+               v_schema, v_table, v_partition, v_subpartition,
+               v_type, v_exp, v_default, v_values;
+
+            IF subpartition_count > 0 THEN
+               stmt := format('%s PARTITION BY %s (%s)', stmt, v_type, v_exp);
+            END IF;
+
+            /* create the partition */
+            EXECUTE stmt;
+
+            /* iterate through the subpartitions (first one is already fetched) */
+            IF subpartition_count > 0 THEN
+               LOOP
+                  stmt := format(
+                             'CREATE TABLE %1$I.%3$I PARTITION OF %1$I.%2$I %4$s',
+                             v_schema, v_partition, v_subpartition,
+                             CASE WHEN v_default
+                                  THEN 'DEFAULT'
+                                  WHEN v_type = 'LIST'
+                                  THEN format(
+                                          'FOR VALUES IN (%s)',
+                                          array_to_string(v_values, ',')
+                                       )
+                                  WHEN v_type = 'RANGE'
+                                  THEN format(
+                                          'FOR VALUES FROM (%s) TO (%s)',
+                                          v_values[1], v_values[2]
+                                       )
+                                  WHEN v_type = 'HASH'
+                                  THEN format(
+                                          'FOR VALUES WITH (modulus %s, remainder %s)',
+                                          subpartition_count, v_values[1]
+                                       )
+                             END
+                          );
+
+                  /* create the subpartition */
+                  EXECUTE stmt;
+
+                  FETCH FROM cur_subpartitions INTO
+                     v_schema, v_table, v_partition, v_subpartition,
+                     v_type, v_exp, v_default, v_values;
+
+                  EXIT WHEN NOT FOUND;
+               END LOOP;
+            END IF;
+
+            CLOSE cur_subpartitions;
+
+            FETCH cur_partitions INTO
+               v_schema, v_table, v_partition,
+               v_type, v_exp, v_default, v_values;
+
+            EXIT WHEN NOT FOUND;
+         END LOOP;
+      END IF;
+
+      CLOSE cur_partitions;
 
       /* move the data if desired */
       IF with_data THEN
-         EXECUTE format('INSERT INTO %I.%I SELECT * FROM %I.%I', schema, table_name, schema, ft);
+         stmt := format('INSERT INTO %I.%I SELECT * FROM %I.%I', schema, table_name, schema, ft);
+         EXECUTE stmt;
       END IF;
 
       /* drop the foreign table */
-      EXECUTE format('DROP FOREIGN TABLE %I.%I', schema, ft);
+      stmt := format('DROP FOREIGN TABLE %I.%I', schema, ft);
+      EXECUTE stmt;
 
       RETURN TRUE;
    EXCEPTION
@@ -64,7 +208,7 @@ BEGIN
                pgstage_schema,
                schema,
                table_name,
-               format('INSERT INTO %I.%I SELECT * FROM %I.%I', schema, table_name, schema, ft),
+               stmt,
                errmsg || coalesce(': ' || detail, '')
             );
    END;
@@ -435,6 +579,55 @@ BEGIN
                   staging_schema)
       USING only_schemas;
 
+   /* refresh "partitions" table */
+   EXECUTE format(E'INSERT INTO partitions (schema, table_name, partition_name, orig_name,\n'
+                   '                        type, key, is_default, values)\n'
+                   '   SELECT %1$s(schema),\n'
+                   '          %1$s(table_name),\n'
+                   '          %1$s(partition_name),\n'
+                   '          partition_name,\n'
+                   '          type, key, is_default,\n'
+                   '          array_agg(%2$s(value) ORDER BY pos)\n'
+                   '   FROM %3$I.partitions\n'
+                   '      CROSS JOIN LATERAL unnest(values) WITH ORDINALITY AS i (value, pos)\n'
+                   '   WHERE $1 IS NULL OR schema = ANY($1)\n'
+                   '   GROUP BY schema, table_name, partition_name,\n'
+                   '            type, key, is_default\n'
+                   'ON CONFLICT ON CONSTRAINT partitions_pkey DO UPDATE SET\n'
+                   '   type       = EXCLUDED.type,\n'
+                   '   key        = EXCLUDED.key,\n'
+                   '   is_default = EXCLUDED.is_default,\n'
+                   '   values     = EXCLUDED.values',
+                   v_translate_identifier,
+                   v_translate_expression,
+                   staging_schema)
+   USING only_schemas;
+
+   /* refresh "subpartitions" table */
+   EXECUTE format(E'INSERT INTO subpartitions (schema, table_name, partition_name, subpartition_name,\n'
+                   '                           orig_name, type, key, is_default, values)\n'
+                   '   SELECT %1$s(schema),\n'
+                   '          %1$s(table_name),\n'
+                   '          %1$s(partition_name),\n'
+                   '          %1$s(subpartition_name),\n'
+                   '          subpartition_name,\n'
+                   '          type, key, is_default,\n'
+                   '          array_agg(%2$s(value) ORDER BY pos)\n'
+                   '   FROM %3$I.subpartitions\n'
+                   '      CROSS JOIN LATERAL unnest(values) WITH ORDINALITY AS i (value, pos)\n'
+                   '   WHERE $1 IS NULL OR schema = ANY($1)\n'
+                   '   GROUP BY schema, table_name, partition_name, subpartition_name,\n'
+                   '            type, key, is_default\n'
+                   'ON CONFLICT ON CONSTRAINT subpartitions_pkey DO UPDATE SET\n'
+                   '   type       = EXCLUDED.type,\n'
+                   '   key        = EXCLUDED.key,\n'
+                   '   is_default = EXCLUDED.is_default,\n'
+                   '   values     = EXCLUDED.values',
+                   v_translate_identifier,
+                   v_translate_expression,
+                   staging_schema)
+   USING only_schemas;
+
    /* refresh "triggers" table */
    EXECUTE format(E'INSERT INTO triggers (schema, table_name, trigger_name, trigger_type, triggering_event,\n'
                    '                      for_each_row, when_clause, trigger_body, orig_source)\n'
@@ -750,6 +943,41 @@ BEGIN
       CONSTRAINT index_columns_fkey
          FOREIGN KEY (schema, table_name, index_name)
             REFERENCES indexes (schema, table_name, index_name)
+   );
+
+   CREATE TABLE partitions (
+      schema         name NOT NULL,
+      table_name     name NOT NULL,
+      partition_name name NOT NULL,
+      orig_name      name NOT NULL,
+      type           text NOT NULL,
+      key            text NOT NULL,
+      is_default     boolean NOT NULL DEFAULT TRUE,
+      values         text[],
+      CONSTRAINT partitions_pkey
+         PRIMARY KEY (schema, table_name, partition_name),
+      CONSTRAINT partitions_fkey
+         FOREIGN KEY (schema, table_name) REFERENCES tables,
+      CONSTRAINT partition_chk_type
+         CHECK (type IN ('LIST', 'RANGE', 'HASH'))
+   );
+
+   CREATE TABLE subpartitions (
+      schema            name NOT NULL,
+      table_name        name NOT NULL,
+      partition_name    name NOT NULL,
+      subpartition_name name NOT NULL,
+      orig_name         name NOT NULL,
+      type              text NOT NULL,
+      key               text NOT NULL,
+      is_default        boolean NOT NULL DEFAULT TRUE,
+      values            text[],
+      CONSTRAINT subpartitions_pkey
+         PRIMARY KEY (schema, table_name, partition_name, subpartition_name),
+      CONSTRAINT subpartitions_fkey
+         FOREIGN KEY (schema, table_name, partition_name) REFERENCES partitions,
+      CONSTRAINT subpartition_chk_type
+         CHECK (type IN ('LIST', 'RANGE', 'HASH'))
    );
 
    CREATE TABLE triggers (
@@ -1464,7 +1692,7 @@ BEGIN
 
          EXECUTE stmt;
 
-         EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, extschema);
+         EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
       EXCEPTION
          WHEN others THEN
             /* turn the error into a warning */
