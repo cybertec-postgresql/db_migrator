@@ -341,6 +341,8 @@ are done with the migration.
 
 ### `partitions` ###
 
+Delete rows from this table if you don't want a partitioned table in PostgreSQL.
+
 - `schema` (type `name`): schema of the partitioned table
 
 - `table_name` (type `name`): name of the partitioned table
@@ -352,16 +354,30 @@ are done with the migration.
 - `type` (type `text`): one of the supported partitioning methods `LIST`,
   `RANGE` or `HASH`
 
-- `expression` (type `text`): partitioning expression used to define a table's
-  partitioning
+- `key` (type `text`): column name or expression used as partitioning key
 
-- `values` (type `text[]`): partition bound specifications depending on
-  partition type
+- `values` (type `text[]`): partition bound specifications
+
+- `values` are partition bound specifications
+
+  - for list partitioning, `values` contains the list
+
+  - for range partitioning, `values` contains the lower and upper bound (where
+    the lower end is included, but the upper end is excluded)
+
+  - for hash partitioning, the only entry in `values` is the remainder for this
+    partition
+
+  Non-numeric values like timestamps have to be quoted as string constants
+  (for example `ARRAY['''2022-01-01''','''2023-01-01''']`).
 
 - `is_default` (type `boolean`, default `FALSE`); `TRUE` if it is the default
   partition
 
 ### `subpartitions` ###
+
+Delete rows from this table if you don't want a subpartitioned table in
+PostgreSQL.
 
 - `schema` (type `name`): schema of the partitioned table
 
@@ -376,11 +392,11 @@ are done with the migration.
 - `type` (type `text`): one of the supported partitioning methods `LIST`,
   `RANGE` or `HASH`
 
-- `expression` (type `text`): partitioning expression used to define a table's
-  composite partitioning
+- `key` (type `text`): column name or expression used as partitioning key
 
-- `values` (type `text[]`): partition bound specifications depending on
-  partition type
+- `values` (type `text[]`): partition bound specifications
+
+  See the documentation of `values` for the `partitions` table above.
 
 - `is_default` (type `boolean`, default `FALSE`); `TRUE` if it is the default
   subpartition
@@ -726,9 +742,9 @@ Parameters:
 
 This function replaces a single foreign table created by `db_migrate_mkforeign`
 with an actual table.
-If any partition scheme exists in `partitions` or `subpartitions` tables, table
-will materialized as a partitioned table with partitions, while `migrate` are
-set to `TRUE`.
+If there are any entries for this table in the `partitions` tables, the table
+will be created as a partitioned table.  Subpartitions are created if there are
+corresponding entries in `subpartitions`.
 The table data are migrated unless `with_data` is `FALSE`.
 
 You don't need this function if you use `db_migrate_tables`.  It is provided as
@@ -1063,6 +1079,52 @@ For a multi-column constraint, the table will have one row per column.
 
 For a multi-column constraint, the table will have one row per column.
 
+### table of partitions ###
+
+    partitions (
+        schema         name    NOT NULL,
+        table_name     name    NOT NULL,
+        partition_name name    NOT NULL,
+        type           text    NOT NULL,
+        key            text    NOT NULL,
+        is_default     boolean NOT NULL,
+        values         text[]
+    )
+
+- `type` is one of the supported partitioning methods `LIST`, `RANGE` or `HASH`
+
+- `key` column name or expression that defines the partitioning key
+
+- `values` are partition bound specifications
+
+  - for list partitioning, `values` contains the list
+
+  - for range partitioning, `values` contains the lower and upper bound (where
+    the lower end is included, but the upper end is excluded)
+
+  - for hash partitioning, the only entry in `values` is the remainder for this
+    partition
+
+  Non-numeric values like timestamps have to be quoted as string constants
+  (for example `ARRAY['''2022-01-01''','''2023-01-01''']`).
+
+- `is_default` is `TRUE` if it is the default partition
+
+### table of subpartitions ###
+
+    subpartitions (
+        schema            name    NOT NULL,
+        table_name        name    NOT NULL,
+        partition_name    name    NOT NULL,
+        subpartition_name name    NOT NULL,
+        type              text    NOT NULL,
+        key               text    NOT NULL,
+        is_default        boolean NOT NULL,
+        values            text[]
+    )
+
+For explanations, see `partitions` above.
+
 ### table of views ###
 
     views (
@@ -1124,50 +1186,6 @@ The columns of the view are defines in the `columns` table.
   rather than an expression
 
 - `column_name` is the indexed column name or expression
-
-### table of partitions ###
-
-    partitions (
-        schema         name    NOT NULL,
-        table_name     name    NOT NULL,
-        partition_name name    NOT NULL,
-        type           text    NOT NULL,
-        expression     text    NOT NULL,
-        is_default     boolean NOT NULL,
-        values         text[]
-    )
-
-- `type` is one of the supported partitioning methods `LIST`, `RANGE` or `HASH`
-
-- `expression` is used to define a table's partitioning
-
-- `values` are partition bound specifications depending on partition type
-
-- `is_default` is `TRUE` if it is the default partition 
-
-With `LIST` partitioning, `values` contains a list of properly quoted values, as
-it can store any data type, like integer, varchar or even expressions.
-
-With `RANGE` partitioning, `values` must be a two-value array to define preperly
-quoted boundaries, like `[lower, upper]`.
-
-With `HASH` partitioning, `values` must be a two-integer array, like `[modulus,
-remainder]`.
-
-### table of subpartitions ###
-
-    subpartitions (
-        schema            name    NOT NULL,
-        table_name        name    NOT NULL,
-        partition_name    name    NOT NULL,
-        subpartition_name name    NOT NULL,
-        type              text    NOT NULL,
-        expression        text    NOT NULL,
-        is_default        boolean NOT NULL,
-        values            text[]
-    )
-
-Same explanations as `partitions` above.
 
 ### table of triggers ###
 
