@@ -1326,7 +1326,8 @@ varies between foreign data wrappers.
 Support
 =======
 
-Create an [issue on Github][issue] or contact [Cybertec][cybertec].
+Create an [issue on Github][issue] or contact
+[CYBERTEC PostgreSQL International GmbH][cybertec].
 
 
  [issue]: https://github.com/cybertec-postgresql/db_migrator/issues
