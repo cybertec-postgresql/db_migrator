@@ -1157,13 +1157,12 @@ The columns of the view are defines in the `columns` table.
        schema        text    NOT NULL,
        table_name    text    NOT NULL,
        index_name    text    NOT NULL,
-       is_expression boolean NOT NULL
+       uniqueness    boolean NOT NULL
     )
 
 - `index_name` identifies the index, but the name won't be migrated
 
-- `is_expression` is `FALSE` if `column_name` is a regular column name
-  rather than an expression
+- `uniqueness` is `TRUE` for unique indexes 
 
 ### table of index columns ###
 
