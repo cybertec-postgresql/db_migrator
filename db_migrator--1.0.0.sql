@@ -1745,6 +1745,7 @@ $$DECLARE
    stmt                   text;
    stmt_middle            text;
    stmt_suffix            text;
+   stmt_col_expr          text;
    separator              text;
    old_s                  name;
    old_t                  name;
@@ -2112,8 +2113,14 @@ BEGIN
          separator := '';
       END IF;
 
-      /* fold expressions to lower case */
-      stmt := stmt || separator || expr
+      /* translate column expression */
+      EXECUTE format(
+                  'SELECT %s(%L)',
+                  v_translate_identifier, 
+                  expr
+              ) INTO stmt_col_expr;
+
+      stmt := stmt || separator || stmt_col_expr
                    || CASE WHEN des THEN ' DESC' ELSE ' ASC' END;
       separator := ', ';
    END LOOP;
