@@ -1164,7 +1164,7 @@ The columns of the view are defines in the `columns` table.
 
 - `index_name` identifies the index, but the name won't be migrated
 
-- `uniqueness` is `TRUE` for unique indexes 
+- `uniqueness` is `TRUE` for unique indexes
 
 ### table of index columns ###
 

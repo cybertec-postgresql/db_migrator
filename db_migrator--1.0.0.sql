@@ -2116,7 +2116,7 @@ BEGIN
       /* translate column expression */
       EXECUTE format(
                   'SELECT %s(%L)',
-                  v_translate_identifier, 
+                  v_translate_identifier,
                   expr
               ) INTO stmt_col_expr;
 
