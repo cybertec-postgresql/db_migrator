@@ -1742,6 +1742,7 @@ $$DECLARE
    old_msglevel           text;
    v_plugin_schema        text;
    v_translate_identifier regproc;
+   v_translate_expression regproc;
    stmt                   text;
    stmt_middle            text;
    stmt_suffix            text;
@@ -1786,10 +1787,11 @@ BEGIN
    END IF;
 
    EXECUTE format(
-              E'SELECT translate_identifier_fun\n'
+              E'SELECT translate_identifier_fun,\n'
+              '        translate_expression_fun\n'
               'FROM %s.db_migrator_callback()',
               v_plugin_schema
-           ) INTO v_translate_identifier;
+           ) INTO v_translate_identifier, v_translate_expression;
 
    /* set "search_path" to the PostgreSQL staging schema and the extension schema */
    EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
@@ -2116,7 +2118,7 @@ BEGIN
       /* translate column expression */
       EXECUTE format(
                   'SELECT %s(%L)',
-                  v_translate_identifier,
+                  v_translate_expression,
                   expr
               ) INTO stmt_col_expr;
 
