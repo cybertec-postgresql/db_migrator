@@ -540,12 +540,13 @@ BEGIN
       USING only_schemas;
 
    /* refresh "indexes" table */
-   EXECUTE format(E'INSERT INTO indexes (schema, table_name, index_name, orig_name, uniqueness)\n'
+   EXECUTE format(E'INSERT INTO indexes (schema, table_name, index_name, orig_name, uniqueness, where_clause)\n'
                    '   SELECT DISTINCT %s(schema),\n'
                    '                   %s(table_name),\n'
                    '                   %s(index_name),\n'
                    '                   index_name,\n'
-                   '                   uniqueness\n'
+                   '                   uniqueness,\n'
+                   '                   %s(where_clause)\n'
                    '   FROM %I.indexes\n'
                    '   WHERE $1 IS NULL OR schema =ANY ($1)\n'
                    'ON CONFLICT ON CONSTRAINT indexes_pkey DO UPDATE SET\n'
@@ -553,6 +554,7 @@ BEGIN
                   v_translate_identifier,
                   v_translate_identifier,
                   v_translate_identifier,
+                  v_translate_expression,
                   staging_schema)
       USING only_schemas;
 
@@ -916,12 +918,13 @@ BEGIN
    );
 
    CREATE TABLE indexes (
-      schema     name    NOT NULL,
-      table_name name    NOT NULL,
-      index_name name    NOT NULL,
-      orig_name  text    NOT NULL,
-      uniqueness boolean NOT NULL,
-      migrate    boolean NOT NULL DEFAULT TRUE,
+      schema       name    NOT NULL,
+      table_name   name    NOT NULL,
+      index_name   name    NOT NULL,
+      orig_name    text    NOT NULL,
+      uniqueness   boolean NOT NULL,
+      where_clause text,
+      migrate      boolean NOT NULL DEFAULT TRUE,
       CONSTRAINT indexes_pkey
          PRIMARY KEY (schema, index_name),
       CONSTRAINT indexes_fkey
@@ -1747,6 +1750,7 @@ $$DECLARE
    stmt_middle            text;
    stmt_suffix            text;
    stmt_col_expr          text;
+   stmt_wher_expr         text;
    separator              text;
    old_s                  name;
    old_t                  name;
@@ -1765,6 +1769,7 @@ $$DECLARE
    rem_colname            name;
    prim                   boolean;
    expr                   text;
+   wher                   text;
    uniq                   boolean;
    des                    boolean;
    is_expr                boolean;
@@ -2061,8 +2066,9 @@ BEGIN
    old_s := '';
    old_t := '';
    old_c := '';
-   FOR loc_s, loc_t, ind_name, uniq, colpos, des, is_expr, expr IN
-      SELECT schema, table_name, i.index_name, ind.uniqueness, i.position, i.descend, i.is_expression, i.column_name
+   FOR loc_s, loc_t, ind_name, uniq, wher, colpos, des, is_expr, expr IN
+      SELECT schema, table_name, i.index_name, ind.uniqueness, ind.where_clause,
+             i.position, i.descend, i.is_expression, i.column_name
       FROM index_columns i
          JOIN indexes ind
             USING (schema, table_name, index_name)
@@ -2075,14 +2081,18 @@ BEGIN
       IF old_s <> loc_s OR old_t <> loc_t OR old_c <> ind_name THEN
          IF old_t <> '' THEN
             BEGIN
-               EXECUTE stmt || ')';
+               stmt := stmt || ')';
+               IF stmt_wher_expr <> '' THEN
+                  stmt := stmt || ' WHERE ' || stmt_wher_expr;
+               END IF;
+               EXECUTE stmt;
             EXCEPTION
                WHEN others THEN
                   /* turn the error into a warning */
                   GET STACKED DIAGNOSTICS
                      errmsg := MESSAGE_TEXT,
                      detail := PG_EXCEPTION_DETAIL;
-                  RAISE WARNING 'Error executing "%"', stmt || ')'
+                  RAISE WARNING 'Error executing "%"', stmt
                      USING DETAIL = errmsg || coalesce(': ' || detail, '');
 
                   EXECUTE
@@ -2099,7 +2109,7 @@ BEGIN
                         pgstage_schema,
                         old_s,
                         old_t,
-                        stmt || ')',
+                        stmt,
                         errmsg || coalesce(': ' || detail, '')
                      );
 
@@ -2113,6 +2123,16 @@ BEGIN
          old_t := loc_t;
          old_c := ind_name;
          separator := '';
+         stmt_wher_expr := '';
+
+         IF wher <> '' THEN
+            /* translate where expression */
+            EXECUTE format(
+                        'SELECT %s(%L)',
+                        v_translate_expression,
+                        wher
+                  ) INTO stmt_wher_expr;
+         END IF;
       END IF;
 
       /* translate column expression */
@@ -2129,14 +2149,18 @@ BEGIN
 
    IF old_t <> '' THEN
       BEGIN
-         EXECUTE stmt || ')';
+         stmt := stmt || ')';
+         IF stmt_wher_expr <> '' THEN
+            stmt := stmt || ' WHERE ' || stmt_wher_expr;
+         END IF;
+         EXECUTE stmt;
       EXCEPTION
          WHEN others THEN
             /* turn the error into a warning */
             GET STACKED DIAGNOSTICS
                errmsg := MESSAGE_TEXT,
                detail := PG_EXCEPTION_DETAIL;
-            RAISE WARNING 'Error executing "%"', stmt || ')'
+            RAISE WARNING 'Error executing "%"', stmt
                USING DETAIL = errmsg || coalesce(': ' || detail, '');
 
             EXECUTE
@@ -2153,7 +2177,7 @@ BEGIN
                   pgstage_schema,
                   old_s,
                   old_t,
-                  stmt || ')',
+                  stmt,
                   errmsg || coalesce(': ' || detail, '')
                );
 

@@ -314,6 +314,10 @@ are done with the migration.
 
   Modify this column if desired.
 
+- `where_clause` (type `text`): expression attached to a partial index
+
+  `NULL` means no filter applies.
+
 - `migrate` (type `boolean`, default `TRUE`): `TRUE` if the constraint should
   be migrated
 
@@ -1159,12 +1163,15 @@ The columns of the view are defines in the `columns` table.
        schema        text    NOT NULL,
        table_name    text    NOT NULL,
        index_name    text    NOT NULL,
-       uniqueness    boolean NOT NULL
+       uniqueness    boolean NOT NULL,
+       where_clause  text
     )
 
 - `index_name` identifies the index, but the name won't be migrated
 
 - `uniqueness` is `TRUE` for unique indexes
+
+- `where_clause` as a partial index expression
 
 ### table of index columns ###
 
