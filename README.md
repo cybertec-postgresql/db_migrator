@@ -1171,7 +1171,7 @@ The columns of the view are defines in the `columns` table.
 
 - `uniqueness` is `TRUE` for unique indexes
 
-- `where_clause` as a partial index expression
+- `where_clause` is a partial index expression or NULL
 
 ### table of index columns ###
 
