@@ -2126,12 +2126,7 @@ BEGIN
          stmt_wher_expr := '';
 
          IF wher <> '' THEN
-            /* translate where expression */
-            EXECUTE format(
-                        'SELECT %s(%L)',
-                        v_translate_expression,
-                        wher
-                  ) INTO stmt_wher_expr;
+            stmt_wher_expr := wher;
          END IF;
       END IF;
 
