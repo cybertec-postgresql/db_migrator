@@ -1750,6 +1750,7 @@ $$DECLARE
    stmt_middle            text;
    stmt_suffix            text;
    stmt_col_expr          text;
+   stmt_wher_expr         text;
    separator              text;
    old_s                  name;
    old_t                  name;
@@ -2081,8 +2082,8 @@ BEGIN
          IF old_t <> '' THEN
             BEGIN
                stmt := stmt || ')';
-               IF wher <> '' THEN
-                  stmt := stmt || ' WHERE ' || wher;
+               IF stmt_wher_expr <> '' THEN
+                  stmt := stmt || ' WHERE ' || stmt_wher_expr;
                END IF;
                EXECUTE stmt;
             EXCEPTION
@@ -2122,6 +2123,11 @@ BEGIN
          old_t := loc_t;
          old_c := ind_name;
          separator := '';
+         stmt_wher_expr := '';
+
+         IF wher <> '' THEN
+            stmt_wher_expr := wher;
+         END IF;
       END IF;
 
       /* translate column expression */
@@ -2139,8 +2145,8 @@ BEGIN
    IF old_t <> '' THEN
       BEGIN
          stmt := stmt || ')';
-         IF wher <> '' THEN
-            stmt := stmt || ' WHERE ' || wher;
+         IF stmt_wher_expr <> '' THEN
+            stmt := stmt || ' WHERE ' || stmt_wher_expr;
          END IF;
          EXECUTE stmt;
       EXCEPTION
