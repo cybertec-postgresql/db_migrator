@@ -805,8 +805,8 @@ Parameters:
 
 Call this to migrate user-defined indexes for the migrated tables.
 
-This function has to run after functions migration, so that all functions that
-may be needed by indexes or column defaults are already there.
+This function should run after migrating the functions, so that all functions
+that are needed by indexes are already there.
 
 ### `db_migrate_constraints` ###
 
@@ -821,7 +821,7 @@ Call this to migrate constraints and column defaults for the migrated tables.
 
 This function has to run after everything else has been migrated, so that all
 functions that may be needed by column defaults are already there and foreign
-key constraints may profit of user-defined indexes to speed-up data validation.
+key constraints can use user-defined indexes to speed-up data validation.
 
 ### `db_migrate_finish` ###
 

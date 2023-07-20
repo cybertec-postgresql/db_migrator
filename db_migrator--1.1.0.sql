@@ -1793,7 +1793,7 @@ BEGIN
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating indexes ...';
    SET LOCAL client_min_messages = warning;
-   
+
    /* loop through all index columns */
    old_s := '';
    old_t := '';
