@@ -794,6 +794,20 @@ Parameters:
 
 Call this to migrate views.
 
+### `db_migrate_indexes` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Call this to migrate user-defined indexes for the migrated tables.
+
+This function has to run after functions migration, so that all functions that
+may be needed by indexes or column defaults are already there.
+
 ### `db_migrate_constraints` ###
 
 Parameters:
@@ -803,12 +817,11 @@ Parameters:
 - `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
   Postgres staging schema
 
-Call this to migrate constraints, indexes and column defaults for the
-migrated tables.
+Call this to migrate constraints and column defaults for the migrated tables.
 
-This function has to run after everything else has been migrated, so that
-all functions that may be needed by indexes or column defaults are
-already there.
+This function has to run after everything else has been migrated, so that all
+functions that may be needed by column defaults are already there and foreign
+key constraints may profit of user-defined indexes to speed-up data validation.
 
 ### `db_migrate_finish` ###
 
@@ -861,6 +874,8 @@ functions in the following order:
 - `db_migrate_triggers`
 
 - `db_migrate_views`
+
+- `db_migrate_indexes`
 
 - `db_migrate_constraints`
 

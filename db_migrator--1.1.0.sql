@@ -1736,6 +1736,191 @@ END;$$;
 COMMENT ON FUNCTION db_migrate_views(name,name) IS
    'sixth step of "db_migrate": create views';
 
+CREATE FUNCTION db_migrate_indexes(
+   plugin         name,
+   pgstage_schema name    DEFAULT NAME 'pgsql_stage'
+) RETURNS integer
+   LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+$$DECLARE
+   old_msglevel           text;
+   v_plugin_schema        text;
+   v_translate_identifier regproc;
+   v_translate_expression regproc;
+   stmt                   text;
+   stmt_col_expr          text;
+   stmt_wher_expr         text;
+   separator              text;
+   old_s                  name;
+   old_t                  name;
+   old_i                  name;
+   loc_s                  name;
+   loc_t                  name;
+   ind_name               name;
+   colpos                 integer;
+   expr                   text;
+   wher                   text;
+   uniq                   boolean;
+   des                    boolean;
+   is_expr                boolean;
+   errmsg                 text;
+   detail                 text;
+   rc                     integer := 0;
+BEGIN
+   /* remember old setting */
+   old_msglevel := current_setting('client_min_messages');
+   /* make the output less verbose */
+   SET LOCAL client_min_messages = warning;
+
+   /* get the plugin callback functions */
+   SELECT extnamespace::regnamespace::text INTO v_plugin_schema
+   FROM pg_extension
+   WHERE extname = plugin;
+
+   IF NOT FOUND THEN
+      RAISE EXCEPTION 'extension "%" is not installed', plugin;
+   END IF;
+
+   EXECUTE format(
+              E'SELECT translate_identifier_fun,\n'
+              '        translate_expression_fun\n'
+              'FROM %s.db_migrator_callback()',
+              v_plugin_schema
+           ) INTO v_translate_identifier, v_translate_expression;
+
+   /* set "search_path" to the PostgreSQL staging schema and the extension schema */
+   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
+
+   EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
+   RAISE NOTICE 'Creating indexes ...';
+   SET LOCAL client_min_messages = warning;
+   
+   /* loop through all index columns */
+   old_s := '';
+   old_t := '';
+   old_i := '';
+   FOR loc_s, loc_t, ind_name, uniq, wher, colpos, des, is_expr, expr IN
+      SELECT schema, table_name, i.index_name, ind.uniqueness, ind.where_clause,
+             i.position, i.descend, i.is_expression, i.column_name
+      FROM index_columns i
+         JOIN indexes ind
+            USING (schema, table_name, index_name)
+         JOIN tables t
+            USING (schema, table_name)
+      WHERE t.migrate
+        AND ind.migrate
+      ORDER BY schema, table_name, i.index_name, i.position
+   LOOP
+      IF old_s <> loc_s OR old_t <> loc_t OR old_i <> ind_name THEN
+         IF old_t <> '' THEN
+            BEGIN
+               stmt := stmt || ')';
+               IF stmt_wher_expr <> '' THEN
+                  stmt := stmt || ' WHERE ' || stmt_wher_expr;
+               END IF;
+               EXECUTE stmt;
+            EXCEPTION
+               WHEN others THEN
+                  /* turn the error into a warning */
+                  GET STACKED DIAGNOSTICS
+                     errmsg := MESSAGE_TEXT,
+                     detail := PG_EXCEPTION_DETAIL;
+                  RAISE WARNING 'Error executing "%"', stmt
+                     USING DETAIL = errmsg || coalesce(': ' || detail, '');
+
+                  EXECUTE
+                     format(
+                        E'INSERT INTO %I.migrate_log\n'
+                        '   (operation, schema_name, object_name, failed_sql, error_message)\n'
+                        'VALUES (\n'
+                        '   ''create index'',\n'
+                        '   %L,\n'
+                        '   %L,\n'
+                        '   %L,\n'
+                        '   %L\n'
+                        ')',
+                        pgstage_schema,
+                        old_s,
+                        old_t,
+                        stmt,
+                        errmsg || coalesce(': ' || detail, '')
+                     );
+
+                  rc := rc + 1;
+            END;
+         END IF;
+
+         stmt := format('CREATE %sINDEX %I ON %I.%I (',
+                        CASE WHEN uniq THEN 'UNIQUE ' ELSE '' END, ind_name, loc_s, loc_t);
+         old_s := loc_s;
+         old_t := loc_t;
+         old_i := ind_name;
+         separator := '';
+         stmt_wher_expr := '';
+
+         IF wher <> '' THEN
+            stmt_wher_expr := wher;
+         END IF;
+      END IF;
+
+      /* translate column expression */
+      EXECUTE format(
+                  'SELECT %s(%L)',
+                  v_translate_expression,
+                  expr
+              ) INTO stmt_col_expr;
+
+      stmt := stmt || separator || stmt_col_expr
+                   || CASE WHEN des THEN ' DESC' ELSE ' ASC' END;
+      separator := ', ';
+   END LOOP;
+
+   IF old_t <> '' THEN
+      BEGIN
+         stmt := stmt || ')';
+         IF stmt_wher_expr <> '' THEN
+            stmt := stmt || ' WHERE ' || stmt_wher_expr;
+         END IF;
+         EXECUTE stmt;
+      EXCEPTION
+         WHEN others THEN
+            /* turn the error into a warning */
+            GET STACKED DIAGNOSTICS
+               errmsg := MESSAGE_TEXT,
+               detail := PG_EXCEPTION_DETAIL;
+            RAISE WARNING 'Error executing "%"', stmt
+               USING DETAIL = errmsg || coalesce(': ' || detail, '');
+
+            EXECUTE
+               format(
+                  E'INSERT INTO %I.migrate_log\n'
+                  '   (operation, schema_name, object_name, failed_sql, error_message)\n'
+                  'VALUES (\n'
+                  '   ''create index'',\n'
+                  '   %L,\n'
+                  '   %L,\n'
+                  '   %L,\n'
+                  '   %L\n'
+                  ')',
+                  pgstage_schema,
+                  old_s,
+                  old_t,
+                  stmt,
+                  errmsg || coalesce(': ' || detail, '')
+               );
+
+            rc := rc + 1;
+      END;
+   END IF;
+
+   /* reset client_min_messages */
+   EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
+
+   RETURN rc;
+END;$$;
+
+COMMENT ON FUNCTION db_migrate_indexes(name,name)
+   IS 'seventh step of "db_migrate": create user-defined indexes';
+
 CREATE FUNCTION db_migrate_constraints(
    plugin         name,
    pgstage_schema name    DEFAULT NAME 'pgsql_stage'
@@ -1749,15 +1934,12 @@ $$DECLARE
    stmt                   text;
    stmt_middle            text;
    stmt_suffix            text;
-   stmt_col_expr          text;
-   stmt_wher_expr         text;
    separator              text;
    old_s                  name;
    old_t                  name;
    old_c                  name;
    loc_s                  name;
    loc_t                  name;
-   ind_name               name;
    cons_name              name;
    candefer               boolean;
    is_deferred            boolean;
@@ -1769,10 +1951,6 @@ $$DECLARE
    rem_colname            name;
    prim                   boolean;
    expr                   text;
-   wher                   text;
-   uniq                   boolean;
-   des                    boolean;
-   is_expr                boolean;
    errmsg                 text;
    detail                 text;
    rc                     integer := 0;
@@ -2059,128 +2237,6 @@ BEGIN
    END LOOP;
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
-   RAISE NOTICE 'Creating indexes ...';
-   SET LOCAL client_min_messages = warning;
-
-   /* loop through all index columns */
-   old_s := '';
-   old_t := '';
-   old_c := '';
-   FOR loc_s, loc_t, ind_name, uniq, wher, colpos, des, is_expr, expr IN
-      SELECT schema, table_name, i.index_name, ind.uniqueness, ind.where_clause,
-             i.position, i.descend, i.is_expression, i.column_name
-      FROM index_columns i
-         JOIN indexes ind
-            USING (schema, table_name, index_name)
-         JOIN tables t
-            USING (schema, table_name)
-      WHERE t.migrate
-        AND ind.migrate
-      ORDER BY schema, table_name, i.index_name, i.position
-   LOOP
-      IF old_s <> loc_s OR old_t <> loc_t OR old_c <> ind_name THEN
-         IF old_t <> '' THEN
-            BEGIN
-               stmt := stmt || ')';
-               IF stmt_wher_expr <> '' THEN
-                  stmt := stmt || ' WHERE ' || stmt_wher_expr;
-               END IF;
-               EXECUTE stmt;
-            EXCEPTION
-               WHEN others THEN
-                  /* turn the error into a warning */
-                  GET STACKED DIAGNOSTICS
-                     errmsg := MESSAGE_TEXT,
-                     detail := PG_EXCEPTION_DETAIL;
-                  RAISE WARNING 'Error executing "%"', stmt
-                     USING DETAIL = errmsg || coalesce(': ' || detail, '');
-
-                  EXECUTE
-                     format(
-                        E'INSERT INTO %I.migrate_log\n'
-                        '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                        'VALUES (\n'
-                        '   ''create index'',\n'
-                        '   %L,\n'
-                        '   %L,\n'
-                        '   %L,\n'
-                        '   %L\n'
-                        ')',
-                        pgstage_schema,
-                        old_s,
-                        old_t,
-                        stmt,
-                        errmsg || coalesce(': ' || detail, '')
-                     );
-
-                  rc := rc + 1;
-            END;
-         END IF;
-
-         stmt := format('CREATE %sINDEX %I ON %I.%I (',
-                        CASE WHEN uniq THEN 'UNIQUE ' ELSE '' END, ind_name, loc_s, loc_t);
-         old_s := loc_s;
-         old_t := loc_t;
-         old_c := ind_name;
-         separator := '';
-         stmt_wher_expr := '';
-
-         IF wher <> '' THEN
-            stmt_wher_expr := wher;
-         END IF;
-      END IF;
-
-      /* translate column expression */
-      EXECUTE format(
-                  'SELECT %s(%L)',
-                  v_translate_expression,
-                  expr
-              ) INTO stmt_col_expr;
-
-      stmt := stmt || separator || stmt_col_expr
-                   || CASE WHEN des THEN ' DESC' ELSE ' ASC' END;
-      separator := ', ';
-   END LOOP;
-
-   IF old_t <> '' THEN
-      BEGIN
-         stmt := stmt || ')';
-         IF stmt_wher_expr <> '' THEN
-            stmt := stmt || ' WHERE ' || stmt_wher_expr;
-         END IF;
-         EXECUTE stmt;
-      EXCEPTION
-         WHEN others THEN
-            /* turn the error into a warning */
-            GET STACKED DIAGNOSTICS
-               errmsg := MESSAGE_TEXT,
-               detail := PG_EXCEPTION_DETAIL;
-            RAISE WARNING 'Error executing "%"', stmt
-               USING DETAIL = errmsg || coalesce(': ' || detail, '');
-
-            EXECUTE
-               format(
-                  E'INSERT INTO %I.migrate_log\n'
-                  '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                  'VALUES (\n'
-                  '   ''create index'',\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L\n'
-                  ')',
-                  pgstage_schema,
-                  old_s,
-                  old_t,
-                  stmt,
-                  errmsg || coalesce(': ' || detail, '')
-               );
-
-            rc := rc + 1;
-      END;
-   END IF;
-
-   EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Setting column default values ...';
    SET LOCAL client_min_messages = warning;
 
@@ -2236,7 +2292,7 @@ BEGIN
 END;$$;
 
 COMMENT ON FUNCTION db_migrate_constraints(name,name)
-   IS 'seventh step of "db_migrate": create constraints and indexes';
+   IS 'eighth step of "db_migrate": create constraints and set defaults';
 
 CREATE FUNCTION db_migrate_finish(
    staging_schema name    DEFAULT NAME 'fdw_stage',
@@ -2326,7 +2382,13 @@ BEGIN
 
    /*
     * Seventh step:
-    * Create constraints and indexes.
+    * Create user-defined indexes.
+    */
+   rc := rc + db_migrate_indexes(plugin, pgstage_schema);
+
+   /*
+    * Eighth step:
+    * Create constraints and defaults.
     */
    rc := rc + db_migrate_constraints(plugin, pgstage_schema);
 
