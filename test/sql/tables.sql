@@ -1,6 +1,5 @@
 \i test/psql.sql
 
-BEGIN;
 SELECT plan(6);
 
 SELECT is(
@@ -41,4 +40,3 @@ SELECT results_eq(
 );
 
 SELECT * FROM finish();
-ROLLBACK;

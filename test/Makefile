@@ -6,11 +6,6 @@ TEST_DIR   = test
 TEST_DATA  = $(TEST_DIR)/data
 TEST_FILES = $(wildcard $(TEST_DIR)/sql/*.sql)
 
-# Execute setup tests before any other tests by putting them first.
-SETUP_TESTS = setup
-TESTS      ?= $(notdir $(TEST_FILES:.sql=))
-ALL_TESTS   = $(SETUP_TESTS) $(filter-out $(SETUP_TESTS), $(TESTS))
-
 # the noop plugin must be deployed before "installcheck" rule.
 NOOP_EXTENSION = noop_migrator
 NOOP_DATA      = $(TEST_DIR)/noop_migrator--*.sql
@@ -19,7 +14,7 @@ PG_CONFIG = pg_config
 SHAREDIR := $(shell $(PG_CONFIG) --sharedir)
 
 # Setup pg_regress options and tests.
-REGRESS        = $(ALL_TESTS)
+REGRESS        = setup tables indexes constraints
 REGRESS_OPTS   = --inputdir=$(TEST_DIR) --outputdir=$(TEST_DIR)
 REGRESS_OPTS  += --load-extension=pgtap
 REGRESS_OPTS  += --load-extension=file_fdw

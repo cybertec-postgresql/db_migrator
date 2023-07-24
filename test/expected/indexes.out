@@ -1,0 +1,6 @@
+\i test/psql.sql
+\unset ECHO
+1..3
+ok 1 - Should create user-defined indexes without errors
+ok 2 - Table sch1.t1 should have the correct indexes
+ok 3 - Index t1_idx2_unique should be unique
