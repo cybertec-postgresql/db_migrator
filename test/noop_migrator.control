@@ -1,0 +1,4 @@
+comment = 'a noop migrator plugin dedicated to db_migrator regression tests'
+default_version = '0.0.0'
+superuser = false
+relocatable = true

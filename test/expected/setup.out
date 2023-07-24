@@ -1,0 +1,4 @@
+\i test/psql.sql
+\unset ECHO
+1..1
+ok 1 - Should prepare staging schemas and catalog without errors
