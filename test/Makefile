@@ -3,6 +3,7 @@
 #
 
 TEST_DIR   = test
+TEST_DATA  = $(TEST_DIR)/data
 TEST_FILES = $(wildcard $(TEST_DIR)/sql/*.sql)
 
 # Execute setup tests before any other tests by putting them first.
@@ -29,5 +30,6 @@ installplugin:
 	@echo 'Install $(NOOP_EXTENSION) plugin'
 	mkdir -p $(SHAREDIR)/extension
 	install -c -m 644 $(NOOP_DATA) $(SHAREDIR)/extension
+	sed -i "s;@testdata@;$(abspath $(TEST_DATA));" $(SHAREDIR)/extension/$(notdir $(NOOP_DATA))
 
 installcheck: installplugin

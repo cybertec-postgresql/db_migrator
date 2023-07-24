@@ -40,13 +40,43 @@ CREATE FUNCTION noop_translate_expression(text)
 RETURNS text LANGUAGE sql CALLED ON NULL INPUT SET search_path = pg_catalog
 AS $$SELECT $1; $$;
 
-CREATE FUNCTION noop_mkforeign(name, name, name, text, text, name[], jsonb[], text[], text[], boolean[], jsonb)
-RETURNS text LANGUAGE sql CALLED ON NULL INPUT SET search_path = pg_catalog
+CREATE FUNCTION noop_mkforeign(
+    server         name,
+    schema         name,
+    table_name     name,
+    orig_schema    text,
+    orig_table     text,
+    column_names   name[],
+    column_options jsonb[],
+    orig_columns   text[],
+    data_types     text[],
+    nullable       boolean[],
+    options        jsonb
+) RETURNS text 
+  LANGUAGE plpgsql CALLED ON NULL INPUT SET search_path = pg_catalog
 AS $noop_mkforeign$
-SELECT format(
-    $$ CREATE FOREIGN TABLE %I.%I (noop name) SERVER %I OPTIONS (filename '/dev/null') $$,
-    $2, $3, $1
-) $noop_mkforeign$;
+DECLARE
+    stmt       text;
+    i          integer;
+    sep        text := '';
+    testdata   text := format('@testdata@/%I.%I.dat', schema, table_name);
+BEGIN
+    stmt := format(E'CREATE FOREIGN TABLE %I.%I (', schema, table_name);
+
+    FOR i IN 1..cardinality(column_names) LOOP
+        stmt := stmt || format(E'%s\n   %I %s%s',
+        sep, column_names[i], data_types[i],
+        CASE WHEN nullable[i] THEN '' ELSE ' NOT NULL' END
+        );
+        sep := ',';
+    END LOOP;
+
+    RETURN stmt || format(
+        E') SERVER %I\n'
+        '   OPTIONS (filename %L)',
+        server, testdata
+    );
+END; $noop_mkforeign$;
 
 CREATE FUNCTION noop_create_catalog (name, name, jsonb)
 RETURNS void LANGUAGE plpgsql CALLED ON NULL INPUT SET search_path = pg_catalog

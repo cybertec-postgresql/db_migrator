@@ -21,7 +21,7 @@ sch1	t2	t2	t
 
 COPY pgsql_stage.columns (schema, table_name, column_name, orig_column, position, type_name, orig_type, nullable, options, default_value) FROM stdin;
 sch1	t1	c1	c1	1	int	int	t	{}	{}
-sch1	t2	c1	c1	1	int	int	t	{}	{}
+sch1	t2	c1	c1	1	int	int	f	{}	{}
 \.
 
 COPY pgsql_stage.indexes (schema, table_name, index_name, orig_name, uniqueness, where_clause, migrate) FROM stdin;
