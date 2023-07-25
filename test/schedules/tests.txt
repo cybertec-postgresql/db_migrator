@@ -1,3 +1,4 @@
 test: tables
+test: partitions
 test: indexes
 test: constraints
