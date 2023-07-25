@@ -1346,6 +1346,13 @@ This function generates a `CREATE FOREIGN TABLE` statement that creates
 a foreign table with these definitions.  This is required because the syntax
 varies between foreign data wrappers.
 
+Contributing
+============
+
+Contributions are always welcome!
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for ways to get started.
+
 Support
 =======
 

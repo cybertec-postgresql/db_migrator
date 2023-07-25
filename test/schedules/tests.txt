@@ -1,0 +1,3 @@
+test: tables
+test: indexes
+test: constraints
