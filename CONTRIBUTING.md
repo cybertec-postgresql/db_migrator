@@ -57,11 +57,10 @@ All you need are:
 
 * PostgreSQL binary with PGXS build infrastructure (`devel` package)
 * a running PostgreSQL instance with valid credentials
-* pgTAP framework installed from [PGXN] with `pgxnclient`
+* pgTAP framework
 
 [pgTAP]: https://pgtap.org/documentation.html
 [PGXS]: https://www.postgresql.org/docs/current/extend-pgxs.html
-[PGXN]: https://pgxn.org/dist/pgtap/
 
 ```sh
 make install installcheck

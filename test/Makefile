@@ -8,6 +8,7 @@ INST_DIR   = $(shell $(PG_CONFIG) --sharedir)/extension
 
 # The noop plugin must be deployed before "installcheck" rule.
 NOOP_EXTENSION = noop_migrator
+NOOP_CTRL      = $(TEST_DIR)/noop_migrator.control
 NOOP_DATA      = $(TEST_DIR)/noop_migrator--*.sql
 
 # Setup pg_regress options and tests.
@@ -25,6 +26,7 @@ REGRESS_OPTS  += --load-extension=$(NOOP_EXTENSION)
 installplugin:
 	@echo 'Install $(NOOP_EXTENSION) plugin'
 	mkdir -p $(INST_DIR)
+	install -c -m 644 $(NOOP_CTRL) $(INST_DIR)
 	install -c -m 644 $(NOOP_DATA) $(INST_DIR)
 	sed -i "s;@testdata@;$(abspath $(TEST_DATA));" $(INST_DIR)/$(notdir $(NOOP_DATA))
 
