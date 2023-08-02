@@ -9,7 +9,7 @@ SELECT is(
 );
 
 SELECT indexes_are(
-    'sch1', 
+    'sch1',
     't1',
     ARRAY['t1_idx1_nonunique', 't1_idx2_unique']
 );

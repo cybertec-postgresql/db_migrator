@@ -52,7 +52,7 @@ CREATE FUNCTION noop_mkforeign(
     data_types     text[],
     nullable       boolean[],
     options        jsonb
-) RETURNS text 
+) RETURNS text
   LANGUAGE plpgsql CALLED ON NULL INPUT SET search_path = pg_catalog
 AS $noop_mkforeign$
 DECLARE

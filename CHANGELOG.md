@@ -11,6 +11,9 @@
 - Factor out `db_migrate_indexes` from `db_migrate_constraints`.  
   Patch by Florent Jardin.
 
+- Add a regression test suite based on pgTAP.
+  Patch by Florent Jardin.
+
 ## Bugfixes: ##
 
 - Call the translation function on expressions in the partitioning key.  

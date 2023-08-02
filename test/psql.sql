@@ -1,10 +1,6 @@
 \unset ECHO
 \pset format unaligned
 \pset tuples_only on
-\pset pager
 
-\set QUIET on
-\set ON_ERROR_ROLLBACK on
-\set ON_ERROR_STOP on
-
-SET client_min_messages=warning
+-- make sure we get the default value
+SET client_min_messages = warning;
