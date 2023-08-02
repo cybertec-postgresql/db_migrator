@@ -6,3 +6,5 @@
 \set QUIET on
 \set ON_ERROR_ROLLBACK on
 \set ON_ERROR_STOP on
+
+SET client_min_messages=warning
