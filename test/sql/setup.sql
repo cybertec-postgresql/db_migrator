@@ -19,6 +19,7 @@ COPY pgsql_stage.tables (schema, table_name, orig_table, migrate) FROM stdin;
 sch1	t1	t1	t
 sch1	t2	t2	t
 part1	pt1	pt1	t
+part1	pt2	pt2	t
 \.
 
 COPY pgsql_stage.columns (schema, table_name, column_name, orig_column, position, type_name, orig_type, nullable, options, default_value) FROM stdin;
@@ -26,11 +27,28 @@ sch1	t1	c1	c1	1	int	int	t	{}	\N
 sch1	t2	c1	c1	1	int	int	f	{}	1
 sch1	t2	t1_c1	t1_c1	2	int	int	t	{}	\N
 part1	pt1	c1	c1	1	int	int	f	{}	\N
+part1	pt2	r1	r1	1	int	int	f	{}	\N
+part1	pt2	h1	h1	2	varchar(100)	varchar(100)	f	{}	\N
 \.
 
 COPY pgsql_stage.partitions (schema, table_name, partition_name, orig_name, type, key, is_default, values) FROM stdin;
 part1	pt1	pt1_1	pt1_1	LIST	c1	f	{1}
 part1	pt1	pt1_def	pt1_def	LIST	c1	t	\N
+part1	pt2	pt2_a	pt2_a	RANGE	r1	f	{MINVALUE,10}
+part1	pt2	pt2_b	pt2_b	RANGE	r1	f	{10,100}
+part1	pt2	pt2_c	pt2_c	RANGE	r1	f	{100,MAXVALUE}
+\.
+
+COPY pgsql_stage.subpartitions (schema, table_name, partition_name, subpartition_name, orig_name, type, key, is_default, values) FROM stdin;
+part1	pt2	pt2_a	pt2_a_1	pt2_a_1	HASH	h1	f	{0}
+part1	pt2	pt2_a	pt2_a_2	pt2_a_2	HASH	h1	f	{1}
+part1	pt2	pt2_a	pt2_a_3	pt2_a_3	HASH	h1	f	{2}
+part1	pt2	pt2_b	pt2_b_1	pt2_b_1	HASH	h1	f	{0}
+part1	pt2	pt2_b	pt2_b_2	pt2_b_2	HASH	h1	f	{1}
+part1	pt2	pt2_b	pt2_b_3	pt2_b_3	HASH	h1	f	{2}
+part1	pt2	pt2_c	pt2_c_1	pt2_c_1	HASH	h1	f	{0}
+part1	pt2	pt2_c	pt2_c_2	pt2_c_2	HASH	h1	f	{1}
+part1	pt2	pt2_c	pt2_c_3	pt2_c_3	HASH	h1	f	{2}
 \.
 
 COPY pgsql_stage.indexes (schema, table_name, index_name, orig_name, uniqueness, where_clause, migrate) FROM stdin;
@@ -52,6 +70,8 @@ sch1	t1	t1_pk	t1_pk	f	f	c1	1	t	t
 sch1	t2	t2_pk_ignored	t2_pk_ignored	f	f	c1	1	t	f
 sch1	t2	t2_uk	t2_uk	f	f	c1	1	f	t
 part1	pt1	pt1_pk	pt1_pk	f	f	c1	1	t	t
+part1	pt2	pt2_pk	pt2_pk	f	f	r1	1	t	t
+part1	pt2	pt2_pk	pt2_pk	f	f	h1	2	t	t
 \.
 
 COPY pgsql_stage.foreign_keys (schema, table_name, constraint_name, orig_name, "deferrable", deferred, delete_rule, column_name, position, remote_schema, remote_table, remote_column, migrate) FROM stdin;
