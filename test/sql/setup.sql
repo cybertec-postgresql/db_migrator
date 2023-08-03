@@ -97,5 +97,5 @@ sch1	v1	SELECT multiply(c1, 10) FROM sch1.t1	''	t	t
 \.
 
 COPY pgsql_stage.triggers (schema, table_name, trigger_name, trigger_type, triggering_event, for_each_row, when_clause, trigger_body, orig_source, migrate, verified) FROM stdin;
-sch1	v1	trg_v1_insert	INSTEAD OF	INSERT	t	\N	''	''	t	t
+sch1	v1	trg_v1_insert	INSTEAD OF	INSERT	t	\N	DECLARE\n    v_value integer := sch1.divide(NEW.c1, 10);\nBEGIN\n    RAISE NOTICE 'Trigger trg_v1_insert called';\n    INSERT INTO sch1.t1 (c1) VALUES (v_value);\n    RETURN NEW;\nEND;		t	t
 \.
