@@ -1,9 +1,12 @@
 \i test/psql.sql
 \unset ECHO
-1..6
+1..9
 ok 1 - Should create foreign tables without errors
-ok 2 - Should migrate tables without errors
-ok 3 - Schema sch1 should have the correct tables
-ok 4 - Column t1.c1 should exist
-ok 5 - Column t2.c1 should be NOT NULL
-ok 6 - Table t1 should have 5 rows
+ok 2 - Schema sch1 should exist
+ok 3 - Schema part1 should exist
+ok 4 - Schema sch1 should have the correct sequences
+ok 5 - Should migrate tables without errors
+ok 6 - Schema sch1 should have the correct tables
+ok 7 - Column t1.c1 should exist
+ok 8 - Column t2.c1 should be NOT NULL
+ok 9 - Table t1 should have 5 rows

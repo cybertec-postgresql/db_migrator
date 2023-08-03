@@ -1,11 +1,21 @@
 \i test/psql.sql
 
-SELECT plan(6);
+SELECT plan(9);
 
 SELECT is(
     db_migrate_mkforeign(plugin => 'noop_migrator', server => 'noop'),
     0,
     'Should create foreign tables without errors'
+);
+
+SELECT has_schema(schema_name)
+FROM (
+    VALUES ('sch1'), ('part1')
+) AS t(schema_name);
+
+SELECT sequences_are(
+    'sch1',
+    ARRAY['seq1']
 );
 
 SELECT is(
