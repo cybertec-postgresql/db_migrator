@@ -770,6 +770,17 @@ Call this to migrate functions and procedures.
 Note that `migrate` is set to `FALSE` by default for functions and procedures,
 so you will have to change that flag if you want to migrate functions.
 
+### `db_migrate_views` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Call this to migrate views.
+
 ### `db_migrate_triggers` ###
 
 Parameters:
@@ -782,17 +793,6 @@ Parameters:
 Call this to migrate triggers.
 Note that `migrate` is set to `FALSE` by default for triggers, so you will
 have to change that flag if you want to migrate functions.
-
-### `db_migrate_views` ###
-
-Parameters:
-
-- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
-
-- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
-  Postgres staging schema
-
-Call this to migrate views.
 
 ### `db_migrate_indexes` ###
 
@@ -871,9 +871,9 @@ functions in the following order:
 
 - `db_migrate_functions`
 
-- `db_migrate_triggers`
-
 - `db_migrate_views`
+
+- `db_migrate_triggers`
 
 - `db_migrate_indexes`
 

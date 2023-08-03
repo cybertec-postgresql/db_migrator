@@ -1626,7 +1626,7 @@ BEGIN
 END;$$;
 
 COMMENT ON FUNCTION db_migrate_triggers(name,name) IS
-   'fifth step of "db_migrate": create triggers';
+   'sixth step of "db_migrate": create triggers';
 
 CREATE FUNCTION db_migrate_views(
    plugin         name,
@@ -1734,7 +1734,7 @@ BEGIN
 END;$$;
 
 COMMENT ON FUNCTION db_migrate_views(name,name) IS
-   'sixth step of "db_migrate": create views';
+   'fifth step of "db_migrate": create views';
 
 CREATE FUNCTION db_migrate_indexes(
    plugin         name,
@@ -2370,15 +2370,15 @@ BEGIN
 
    /*
     * Fifth step:
-    * Create triggers (this won't do anything since they have "migrate = FALSE").
-    */
-   rc := rc + db_migrate_triggers(plugin, pgstage_schema);
-
-   /*
-    * Sixth step:
     * Create views.
     */
    rc := rc + db_migrate_views(plugin, pgstage_schema);
+
+   /*
+    * Sixth step:
+    * Create triggers (this won't do anything since they have "migrate = FALSE").
+    */
+   rc := rc + db_migrate_triggers(plugin, pgstage_schema);
 
    /*
     * Seventh step:
