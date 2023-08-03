@@ -1,4 +1,7 @@
 test: tables
 test: partitions
+test: functions
+test: views
+test: triggers
 test: indexes
 test: constraints

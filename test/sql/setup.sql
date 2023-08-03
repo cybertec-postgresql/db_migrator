@@ -26,6 +26,7 @@ COPY pgsql_stage.columns (schema, table_name, column_name, orig_column, position
 sch1	t1	c1	c1	1	int	int	t	{}	\N
 sch1	t2	c1	c1	1	int	int	f	{}	1
 sch1	t2	t1_c1	t1_c1	2	int	int	t	{}	\N
+sch1	v1	c1	c1	1	int	int	f	{}	\N
 part1	pt1	c1	c1	1	int	int	f	{}	\N
 part1	pt2	r1	r1	1	int	int	f	{}	\N
 part1	pt2	h1	h1	2	varchar(100)	varchar(100)	f	{}	\N
@@ -80,4 +81,17 @@ sch1	t2	t2_fk	t2_fk	f	f	NO ACTION	t1_c1	1	sch1	t1	c1	t
 
 COPY pgsql_stage.checks (schema, table_name, constraint_name, orig_name, "deferrable", deferred, condition, migrate) FROM stdin;
 sch1	t2	t2_ck	t2_ck	f	f	(c1 BETWEEN 1 AND 100)	t
+\.
+
+COPY pgsql_stage.functions (schema, function_name, is_procedure, source, orig_source, migrate, verified) FROM stdin;
+sch1	multiply	f	FUNCTION multiply(int,int) RETURNS int LANGUAGE sql AS $$SELECT $1 * $2$$	''	t	t
+sch1	divide	f	FUNCTION divide(int,int) RETURNS int LANGUAGE sql AS $$SELECT $1 / $2$$	''	t	t
+\.
+
+COPY pgsql_stage.views (schema, view_name, definition, orig_def, migrate, verified) FROM stdin;
+sch1	v1	SELECT multiply(c1, 10) FROM sch1.t1	''	t	t
+\.
+
+COPY pgsql_stage.triggers (schema, table_name, trigger_name, trigger_type, triggering_event, for_each_row, when_clause, trigger_body, orig_source, migrate, verified) FROM stdin;
+sch1	v1	trg_v1_insert	INSTEAD OF	INSERT	t	\N	''	''	t	t
 \.

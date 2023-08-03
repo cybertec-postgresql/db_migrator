@@ -1,0 +1,6 @@
+\i test/psql.sql
+\unset ECHO
+1..3
+ok 1 - Should create triggers without errors
+ok 2 - Should insert 60 into v1 without errors
+ok 3 - Last inserted value in sch1.v1 should be 60

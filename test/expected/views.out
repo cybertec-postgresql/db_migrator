@@ -1,0 +1,5 @@
+\i test/psql.sql
+\unset ECHO
+1..2
+ok 1 - Should create views without errors
+ok 2 - View v1 should exist
