@@ -20,10 +20,10 @@ CREATE FUNCTION materialize_foreign_table(
 ) RETURNS boolean
    LANGUAGE plpgsql VOLATILE STRICT SET search_path = pg_catalog AS
 $$DECLARE
+   extschema          text;
+   result             boolean = TRUE;
    ft                 name;
    stmt               text;
-   errmsg             text;
-   detail             text;
    cur_partitions     refcursor;
    cur_subpartitions  refcursor;
    partition_count    integer;
@@ -37,183 +37,196 @@ $$DECLARE
    v_values           text[];
    v_default          boolean;
 BEGIN
-   BEGIN
-      /* rename the foreign table */
-      ft := substr(table_name, 1, 62) || E'\x07';
-      stmt := format('ALTER FOREIGN TABLE %I.%I RENAME TO %I', schema, table_name, ft);
-      EXECUTE stmt;
+   /* set "search_path" to the PostgreSQL stage, and extension schema */
+   SELECT extnamespace::regnamespace::text INTO extschema
+   FROM pg_extension
+   WHERE extname = 'db_migrator';
 
-      /* start a CREATE TABLE statement */
-      stmt := format('CREATE TABLE %I.%I (LIKE %I.%I)', schema, table_name, schema, ft);
+   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, extschema);
 
-      /* cursor for partitions */
-      OPEN cur_partitions FOR EXECUTE
-         format(
-            E'SELECT schema, table_name, partition_name, type, key, is_default, values\n'
-            'FROM %I.partitions\n'
-            'WHERE schema = $1 AND table_name = $2',
-            pgstage_schema
-         )
-         USING schema, table_name;
+   /* rename the foreign table */
+   ft := substr(table_name, 1, 62) || E'\x07';
+   stmt := format('ALTER FOREIGN TABLE %I.%I RENAME TO %I', schema, table_name, ft);
+   result := result AND execute_statement(
+      operation => 'rename foreign table',
+      schema => schema,
+      object_name => table_name,
+      stmt => stmt,
+      pgstage_schema => pgstage_schema
+   );
 
-      /* the number of result rows is the partition count */
-      MOVE FORWARD ALL IN cur_partitions;
-      GET DIAGNOSTICS partition_count = ROW_COUNT;
-      MOVE ABSOLUTE 0 IN cur_partitions;
+   /* start a CREATE TABLE statement */
+   stmt := format('CREATE TABLE %I.%I (LIKE %I.%I)', schema, table_name, schema, ft);
 
-      FETCH cur_partitions INTO
-         v_schema, v_table, v_partition,
-         v_type, v_exp, v_default, v_values;
+   /* cursor for partitions */
+   OPEN cur_partitions FOR EXECUTE
+      format(
+         E'SELECT schema, table_name, partition_name, type, key, is_default, values\n'
+         'FROM %I.partitions\n'
+         'WHERE schema = $1 AND table_name = $2',
+         pgstage_schema
+      )
+      USING schema, table_name;
 
-      /* add a partitioning clause if appropriate */
-      IF partition_count > 0 THEN
-         stmt := format('%s PARTITION BY %s (%s)', stmt, v_type, v_exp);
-      END IF;
+   /* the number of result rows is the partition count */
+   MOVE FORWARD ALL IN cur_partitions;
+   GET DIAGNOSTICS partition_count = ROW_COUNT;
+   MOVE ABSOLUTE 0 IN cur_partitions;
 
-      /* create the table */
-      EXECUTE stmt;
+   FETCH cur_partitions INTO
+      v_schema, v_table, v_partition,
+      v_type, v_exp, v_default, v_values;
 
-      /* iterate through the table's partitions (first one is already fetched) */
-      IF partition_count > 0 THEN
-         LOOP
-            stmt := format(
-                       'CREATE TABLE %1$I.%3$I PARTITION OF %1$I.%2$I %4$s',
-                       v_schema, v_table, v_partition,
-                       CASE WHEN v_default
-                            THEN 'DEFAULT'
-                            WHEN v_type = 'LIST'
-                            THEN format(
-                                    'FOR VALUES IN (%s)',
-                                    array_to_string(v_values, ',')
-                                 )
-                            WHEN v_type = 'RANGE'
-                            THEN format(
-                                    'FOR VALUES FROM (%s) TO (%s)',
-                                    v_values[1], v_values[2]
-                                 )
-                            WHEN v_type = 'HASH'
-                            THEN format(
-                                    'FOR VALUES WITH (modulus %s, remainder %s)',
-                                    partition_count, v_values[1]
-                                 )
-                       END
-                    );
+   /* add a partitioning clause if appropriate */
+   IF partition_count > 0 THEN
+      stmt := format('%s PARTITION BY %s (%s)', stmt, v_type, v_exp);
+   END IF;
 
-            /* cursor for the partition's subpartitions */
-            OPEN cur_subpartitions FOR EXECUTE
-               format(
-                  E'SELECT schema, table_name, partition_name, subpartition_name, type, key, is_default, values\n'
-                  'FROM %I.subpartitions\n'
-                  'WHERE schema = $1 AND table_name = $2 AND partition_name = $3',
-                  pgstage_schema
-               )
-               USING schema, table_name, v_partition;
+   /* create the table */
+   result := result AND execute_statement(
+      operation => 'create table',
+      schema => schema,
+      object_name => table_name,
+      stmt => stmt,
+      pgstage_schema => pgstage_schema
+   );
 
-            /* the number of result rows is the sub partition count */
-            MOVE FORWARD ALL IN cur_subpartitions;
-            GET DIAGNOSTICS subpartition_count = ROW_COUNT;
-            MOVE ABSOLUTE 0 IN cur_subpartitions;
+   /* iterate through the table's partitions (first one is already fetched) */
+   IF partition_count > 0 THEN
+      LOOP
+         stmt := format(
+                     'CREATE TABLE %1$I.%3$I PARTITION OF %1$I.%2$I %4$s',
+                     v_schema, v_table, v_partition,
+                     CASE WHEN v_default
+                           THEN 'DEFAULT'
+                           WHEN v_type = 'LIST'
+                           THEN format(
+                                 'FOR VALUES IN (%s)',
+                                 array_to_string(v_values, ',')
+                              )
+                           WHEN v_type = 'RANGE'
+                           THEN format(
+                                 'FOR VALUES FROM (%s) TO (%s)',
+                                 v_values[1], v_values[2]
+                              )
+                           WHEN v_type = 'HASH'
+                           THEN format(
+                                 'FOR VALUES WITH (modulus %s, remainder %s)',
+                                 partition_count, v_values[1]
+                              )
+                     END
+                  );
 
-            FETCH cur_subpartitions INTO
-               v_schema, v_table, v_partition, v_subpartition,
-               v_type, v_exp, v_default, v_values;
-
-            IF subpartition_count > 0 THEN
-               stmt := format('%s PARTITION BY %s (%s)', stmt, v_type, v_exp);
-            END IF;
-
-            /* create the partition */
-            EXECUTE stmt;
-
-            /* iterate through the subpartitions (first one is already fetched) */
-            IF subpartition_count > 0 THEN
-               LOOP
-                  stmt := format(
-                             'CREATE TABLE %1$I.%3$I PARTITION OF %1$I.%2$I %4$s',
-                             v_schema, v_partition, v_subpartition,
-                             CASE WHEN v_default
-                                  THEN 'DEFAULT'
-                                  WHEN v_type = 'LIST'
-                                  THEN format(
-                                          'FOR VALUES IN (%s)',
-                                          array_to_string(v_values, ',')
-                                       )
-                                  WHEN v_type = 'RANGE'
-                                  THEN format(
-                                          'FOR VALUES FROM (%s) TO (%s)',
-                                          v_values[1], v_values[2]
-                                       )
-                                  WHEN v_type = 'HASH'
-                                  THEN format(
-                                          'FOR VALUES WITH (modulus %s, remainder %s)',
-                                          subpartition_count, v_values[1]
-                                       )
-                             END
-                          );
-
-                  /* create the subpartition */
-                  EXECUTE stmt;
-
-                  FETCH FROM cur_subpartitions INTO
-                     v_schema, v_table, v_partition, v_subpartition,
-                     v_type, v_exp, v_default, v_values;
-
-                  EXIT WHEN NOT FOUND;
-               END LOOP;
-            END IF;
-
-            CLOSE cur_subpartitions;
-
-            FETCH cur_partitions INTO
-               v_schema, v_table, v_partition,
-               v_type, v_exp, v_default, v_values;
-
-            EXIT WHEN NOT FOUND;
-         END LOOP;
-      END IF;
-
-      CLOSE cur_partitions;
-
-      /* move the data if desired */
-      IF with_data THEN
-         stmt := format('INSERT INTO %I.%I SELECT * FROM %I.%I', schema, table_name, schema, ft);
-         EXECUTE stmt;
-      END IF;
-
-      /* drop the foreign table */
-      stmt := format('DROP FOREIGN TABLE %I.%I', schema, ft);
-      EXECUTE stmt;
-
-      RETURN TRUE;
-   EXCEPTION
-      WHEN others THEN
-         /* turn the error into a warning */
-         GET STACKED DIAGNOSTICS
-            errmsg := MESSAGE_TEXT,
-            detail := PG_EXCEPTION_DETAIL;
-         RAISE WARNING 'Error loading table data for %.%', schema, table_name
-            USING DETAIL = errmsg || coalesce(': ' || detail, '');
-
-         EXECUTE
+         /* cursor for the partition's subpartitions */
+         OPEN cur_subpartitions FOR EXECUTE
             format(
-               E'INSERT INTO %I.migrate_log\n'
-               '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-               'VALUES (\n'
-               '   ''copy table data'',\n'
-               '   %L,\n'
-               '   %L,\n'
-               '   %L,\n'
-               '   %L\n'
-               ')',
-               pgstage_schema,
-               schema,
-               table_name,
-               stmt,
-               errmsg || coalesce(': ' || detail, '')
-            );
-   END;
+               E'SELECT schema, table_name, partition_name, subpartition_name, type, key, is_default, values\n'
+               'FROM %I.subpartitions\n'
+               'WHERE schema = $1 AND table_name = $2 AND partition_name = $3',
+               pgstage_schema
+            )
+            USING schema, table_name, v_partition;
 
-   RETURN FALSE;
+         /* the number of result rows is the sub partition count */
+         MOVE FORWARD ALL IN cur_subpartitions;
+         GET DIAGNOSTICS subpartition_count = ROW_COUNT;
+         MOVE ABSOLUTE 0 IN cur_subpartitions;
+
+         FETCH cur_subpartitions INTO
+            v_schema, v_table, v_partition, v_subpartition,
+            v_type, v_exp, v_default, v_values;
+
+         IF subpartition_count > 0 THEN
+            stmt := format('%s PARTITION BY %s (%s)', stmt, v_type, v_exp);
+         END IF;
+
+         /* create the partition */
+         result := result AND execute_statement(
+            operation => 'create table partition',
+            schema => schema,
+            object_name => table_name,
+            stmt => stmt,
+            pgstage_schema => pgstage_schema
+         );
+
+         /* iterate through the subpartitions (first one is already fetched) */
+         IF subpartition_count > 0 THEN
+            LOOP
+               stmt := format(
+                           'CREATE TABLE %1$I.%3$I PARTITION OF %1$I.%2$I %4$s',
+                           v_schema, v_partition, v_subpartition,
+                           CASE WHEN v_default
+                                 THEN 'DEFAULT'
+                                 WHEN v_type = 'LIST'
+                                 THEN format(
+                                       'FOR VALUES IN (%s)',
+                                       array_to_string(v_values, ',')
+                                    )
+                                 WHEN v_type = 'RANGE'
+                                 THEN format(
+                                       'FOR VALUES FROM (%s) TO (%s)',
+                                       v_values[1], v_values[2]
+                                    )
+                                 WHEN v_type = 'HASH'
+                                 THEN format(
+                                       'FOR VALUES WITH (modulus %s, remainder %s)',
+                                       subpartition_count, v_values[1]
+                                    )
+                           END
+                        );
+
+               /* create the subpartition */
+               result := result AND execute_statement(
+                  operation => 'create table subpartition',
+                  schema => schema,
+                  object_name => table_name,
+                  stmt => stmt,
+                  pgstage_schema => pgstage_schema
+               );
+
+               FETCH FROM cur_subpartitions INTO
+                  v_schema, v_table, v_partition, v_subpartition,
+                  v_type, v_exp, v_default, v_values;
+
+               EXIT WHEN NOT FOUND;
+            END LOOP;
+         END IF;
+
+         CLOSE cur_subpartitions;
+
+         FETCH cur_partitions INTO
+            v_schema, v_table, v_partition,
+            v_type, v_exp, v_default, v_values;
+
+         EXIT WHEN NOT FOUND;
+      END LOOP;
+   END IF;
+
+   CLOSE cur_partitions;
+
+   /* move the data if desired */
+   IF with_data THEN
+      stmt := format('INSERT INTO %I.%I SELECT * FROM %I.%I', schema, table_name, schema, ft);
+      result := result AND execute_statement(
+         operation => 'copy table data',
+         schema => schema,
+         object_name => table_name,
+         stmt => stmt,
+         pgstage_schema => pgstage_schema
+      );
+   END IF;
+
+   /* drop the foreign table */
+   stmt := format('DROP FOREIGN TABLE %I.%I', schema, ft);
+   result := result AND execute_statement(
+      operation => 'copy table data',
+      schema => schema,
+      object_name => table_name,
+      stmt => stmt,
+      pgstage_schema => pgstage_schema
+   );
+
+   RETURN result;
 END;$$;
 
 COMMENT ON FUNCTION materialize_foreign_table(name,name,boolean,name) IS
@@ -1092,8 +1105,6 @@ $$DECLARE
    type_array              text[] := ARRAY[]::text[];
    null_array              boolean[] := ARRAY[]::boolean[];
    old_msglevel            text;
-   errmsg                  text;
-   detail                  text;
    rc                      integer := 0;
 BEGIN
    /* remember old setting */
@@ -1134,34 +1145,17 @@ BEGIN
    LOOP
       BEGIN
          /* create schema */
-         EXECUTE format('CREATE SCHEMA %I', s);
-      EXCEPTION
-         WHEN others THEN
-            /* turn the error into a warning */
-            GET STACKED DIAGNOSTICS
-               errmsg := MESSAGE_TEXT,
-               detail := PG_EXCEPTION_DETAIL;
-            RAISE WARNING 'Error creating schema "%"', s
-               USING DETAIL = errmsg || coalesce(': ' || detail, '');
+         stmt := format('CREATE SCHEMA %I', s);
 
-            EXECUTE
-               format(
-                  E'INSERT INTO %I.migrate_log\n'
-                  '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                  'VALUES (\n'
-                  '   ''create schema'',\n'
-                  '   %L,\n'
-                  '   '''',\n'
-                  '   %L,\n'
-                  '   %L\n'
-                  ')',
-                  pgstage_schema,
-                  s,
-                  format('CREATE SCHEMA %I', s),
-                  errmsg || coalesce(': ' || detail, '')
-               );
-
+         IF NOT execute_statement(
+            operation => 'create schema',
+            schema => s,
+            object_name => '',
+            stmt => stmt,
+            pgstage_schema => pgstage_schema
+         ) THEN
             rc := rc + 1;
+         END IF;
       END;
    END LOOP;
 
@@ -1175,45 +1169,22 @@ BEGIN
          FROM sequences
    LOOP
       BEGIN
-      EXECUTE format('CREATE SEQUENCE %I.%I INCREMENT %s %s %s START %s CACHE %s %sCYCLE',
+         stmt := format('CREATE SEQUENCE %I.%I INCREMENT %s %s %s START %s CACHE %s %sCYCLE',
                      sch, seq, incr,
                      CASE WHEN minv IS NULL THEN 'NO MINVALUE' ELSE 'MINVALUE ' || minv END,
                      CASE WHEN maxv IS NULL THEN 'NO MAXVALUE' ELSE 'MAXVALUE ' || maxv END,
                      lastval + 1, cachesiz,
                      CASE WHEN cycl THEN '' ELSE 'NO ' END);
-      EXCEPTION
-         WHEN others THEN
-            /* turn the error into a warning */
-            GET STACKED DIAGNOSTICS
-               errmsg := MESSAGE_TEXT,
-               detail := PG_EXCEPTION_DETAIL;
-            RAISE WARNING 'Error creating sequence %.%', sch, seq
-               USING DETAIL = errmsg || coalesce(': ' || detail, '');
 
-            EXECUTE
-               format(
-                  E'INSERT INTO %I.migrate_log\n'
-                  '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                  'VALUES (\n'
-                  '   ''create sequence'',\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L\n'
-                  ')',
-                  pgstage_schema,
-                  sch,
-                  seq,
-                  format('CREATE SEQUENCE %I.%I INCREMENT %s %s %s START %s CACHE %s %sCYCLE',
-                         sch, seq, incr,
-                         CASE WHEN minv IS NULL THEN 'NO MINVALUE' ELSE 'MINVALUE ' || minv END,
-                         CASE WHEN maxv IS NULL THEN 'NO MAXVALUE' ELSE 'MAXVALUE ' || maxv END,
-                         lastval + 1, cachesiz,
-                         CASE WHEN cycl THEN '' ELSE 'NO ' END),
-                  errmsg || coalesce(': ' || detail, '')
-               );
-
+         IF NOT execute_statement(
+            operation => 'create sequence',
+            schema => sch,
+            object_name => seq,
+            stmt => stmt,
+            pgstage_schema => pgstage_schema
+         ) THEN
             rc := rc + 1;
+         END IF;
       END;
    END LOOP;
 
@@ -1255,38 +1226,17 @@ BEGIN
             USING server, o_sch, o_tab, o_fsch, o_ftab,
                   col_array, col_options_array, fcol_array,
                   type_array, null_array, options;
+
             /* execute the statement and log errors */
-            BEGIN
-               EXECUTE stmt;
-            EXCEPTION
-               WHEN others THEN
-                  /* turn the error into a warning */
-                  GET STACKED DIAGNOSTICS
-                     errmsg := MESSAGE_TEXT,
-                     detail := PG_EXCEPTION_DETAIL;
-                  RAISE WARNING 'Error creating foreign table %.%', o_sch, o_tab
-                     USING DETAIL = errmsg || coalesce(': ' || detail, '');
-
-                  EXECUTE
-                     format(
-                        E'INSERT INTO %I.migrate_log\n'
-                        '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                        'VALUES (\n'
-                        '   ''create foreign table'',\n'
-                        '   %L,\n'
-                        '   %L,\n'
-                        '   %L,\n'
-                        '   %L\n'
-                        ')',
-                        pgstage_schema,
-                        o_sch,
-                        o_tab,
-                        stmt,
-                        errmsg || coalesce(': ' || detail, '')
-                     );
-
-                  rc := rc + 1;
-            END;
+            IF NOT execute_statement(
+               operation => 'create foreign table',
+               schema => o_sch,
+               object_name => o_tab,
+               stmt => stmt,
+               pgstage_schema => pgstage_schema
+            ) THEN
+               rc := rc + 1;
+            END IF;
          END IF;
 
          o_sch := sch;
@@ -1320,37 +1270,15 @@ BEGIN
             col_array, col_options_array, fcol_array,
             type_array, null_array, options;
       /* execute the statement and log errors */
-      BEGIN
-         EXECUTE stmt;
-      EXCEPTION
-         WHEN others THEN
-            /* turn the error into a warning */
-            GET STACKED DIAGNOSTICS
-               errmsg := MESSAGE_TEXT,
-               detail := PG_EXCEPTION_DETAIL;
-            RAISE WARNING 'Error creating foreign table %.%', o_sch, o_tab
-               USING DETAIL = errmsg || coalesce(': ' || detail, '');
-
-            EXECUTE
-               format(
-                  E'INSERT INTO %I.migrate_log\n'
-                  '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                  'VALUES (\n'
-                  '   ''create foreign table'',\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L\n'
-                  ')',
-                  pgstage_schema,
-                  o_sch,
-                  o_tab,
-                  stmt,
-                  errmsg || coalesce(': ' || detail, '')
-               );
-
-            rc := rc + 1;
-      END;
+      IF NOT execute_statement(
+         operation => 'create foreign table',
+         schema => o_sch,
+         object_name => o_tab,
+         stmt => stmt,
+         pgstage_schema => pgstage_schema
+      ) THEN
+         rc := rc + 1;
+      END IF;
    END IF;
 
    /* reset client_min_messages */
@@ -1436,9 +1364,8 @@ $$DECLARE
    v_translate_identifier regproc;
    sch                    name;
    fname                  name;
+   stmt                   text;
    src                    text;
-   errmsg                 text;
-   detail                 text;
    rc                     integer := 0;
 BEGIN
    /* remember old setting */
@@ -1469,40 +1396,19 @@ BEGIN
       FROM functions
       WHERE migrate
    LOOP
-      BEGIN
-         /* set "search_path" so that the function can be created without schema */
-         EXECUTE format('SET LOCAL search_path = %I', sch);
+      /* set "search_path" so that the function can be created without schema */
+      stmt := format('SET LOCAL search_path = %I', sch);
+      stmt := format('%s; CREATE %s', stmt, src);
 
-         EXECUTE 'CREATE ' || src;
-      EXCEPTION
-         WHEN others THEN
-            /* turn the error into a warning */
-            GET STACKED DIAGNOSTICS
-               errmsg := MESSAGE_TEXT,
-               detail := PG_EXCEPTION_DETAIL;
-            RAISE WARNING 'Error creating function %.%', sch, fname
-               USING DETAIL = errmsg || coalesce(': ' || detail, '');
-
-            EXECUTE
-               format(
-                  E'INSERT INTO %I.migrate_log\n'
-                  '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                  'VALUES (\n'
-                  '   ''create function'',\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L\n'
-                  ')',
-                  pgstage_schema,
-                  sch,
-                  fname,
-                  'CREATE ' || src,
-                  errmsg || coalesce(': ' || detail, '')
-               );
-
-            rc := rc + 1;
-      END;
+      IF NOT execute_statement(
+         operation => 'create function',
+         schema => sch,
+         object_name => fname,
+         stmt => stmt,
+         pgstage_schema => pgstage_schema
+      ) THEN
+         rc := rc + 1;
+      END IF;
    END LOOP;
 
    /* reset client_min_messages */
@@ -1530,9 +1436,9 @@ $$DECLARE
    event                  text;
    eachrow                boolean;
    whencl                 text;
+   stmt                   text;
    src                    text;
-   errmsg                 text;
-   detail                 text;
+   result                 boolean := TRUE;
    rc                     integer := 0;
 BEGIN
    /* remember old setting */
@@ -1564,59 +1470,40 @@ BEGIN
       FROM triggers
       WHERE migrate
    LOOP
-      BEGIN
-         /* create the trigger function */
-         EXECUTE format(E'CREATE FUNCTION %I.%I() RETURNS trigger\n'
-                        '   LANGUAGE plpgsql SET search_path = %L AS\n$_f_$%s$_f_$',
-                        sch, trigname, sch, src);
-         /* create the trigger itself */
-         EXECUTE format(E'CREATE TRIGGER %I %s %s ON %I.%I FOR EACH %s\n'
-                        '   EXECUTE PROCEDURE %I.%I()',
-                        trigname,
-                        trigtype,
-                        event,
-                        sch, tabname,
-                        CASE WHEN eachrow THEN 'ROW' ELSE 'STATEMENT' END,
-                        sch, trigname);
-      EXCEPTION
-         WHEN others THEN
-            /* turn the error into a warning */
-            GET STACKED DIAGNOSTICS
-               errmsg := MESSAGE_TEXT,
-               detail := PG_EXCEPTION_DETAIL;
-            RAISE WARNING 'Error creating trigger % on %.%', trigname, sch, tabname
-               USING DETAIL = errmsg || coalesce(': ' || detail, '');
+      /* create the trigger function */
+      stmt := format(E'CREATE FUNCTION %I.%I() RETURNS trigger\n'
+                      '   LANGUAGE plpgsql SET search_path = %L AS\n$_f_$%s$_f_$',
+                      sch, trigname, sch, src);
 
-            EXECUTE
-               format(
-                  E'INSERT INTO %I.migrate_log\n'
-                  '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                  'VALUES (\n'
-                  '   ''create trigger'',\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L\n'
-                  ')',
-                  pgstage_schema,
-                  sch,
-                  tabname,
-                  format(E'CREATE FUNCTION %I.%I() RETURNS trigger\n'
-                         '   LANGUAGE plpgsql SET search_path = %L AS\n$_f_$%s$_f_$',
-                         sch, trigname, sch, src) || E';\n' ||
-                  format(E'CREATE TRIGGER %I %s %s ON %I.%I FOR EACH %s\n'
-                         '   EXECUTE PROCEDURE %I.%I()',
-                         trigname,
-                         trigtype,
-                         event,
-                         sch, tabname,
-                         CASE WHEN eachrow THEN 'ROW' ELSE 'STATEMENT' END,
-                         sch, trigname),
-                  errmsg || coalesce(': ' || detail, '')
-               );
+      result := result AND execute_statement(
+         operation => 'create trigger',
+         schema => sch,
+         object_name => trigname,
+         stmt => stmt,
+         pgstage_schema => pgstage_schema
+      );
 
-            rc := rc + 1;
-      END;
+      /* create the trigger itself */
+      stmt := format(E'CREATE TRIGGER %I %s %s ON %I.%I FOR EACH %s\n'
+                      '   EXECUTE PROCEDURE %I.%I()',
+                      trigname,
+                      trigtype,
+                      event,
+                      sch, tabname,
+                      CASE WHEN eachrow THEN 'ROW' ELSE 'STATEMENT' END,
+                      sch, trigname);
+
+      result := result AND execute_statement(
+         operation => 'create trigger',
+         schema => sch,
+         object_name => trigname,
+         stmt => stmt,
+         pgstage_schema => pgstage_schema
+      );
+
+      IF NOT result THEN
+         rc := rc + 1;
+      END IF;
    END LOOP;
 
    /* reset client_min_messages */
@@ -1643,8 +1530,6 @@ $$DECLARE
    src                    text;
    stmt                   text;
    separator              text;
-   errmsg                 text;
-   detail                 text;
    rc                     integer := 0;
 BEGIN
    /* remember old setting */
@@ -1675,7 +1560,9 @@ BEGIN
       FROM views
       WHERE migrate
    LOOP
-      stmt := format(E'CREATE VIEW %I.%I (', sch, vname);
+      /* set "search_path" so that the function body can reference objects without schema */
+      stmt := format('SET LOCAL search_path = %I', sch);
+      stmt := format(E'%s;\nCREATE VIEW %I.%I (', stmt, sch, vname);
       separator := E'\n   ';
       FOR col IN
          SELECT column_name
@@ -1689,42 +1576,17 @@ BEGIN
       END LOOP;
       stmt := stmt || E'\n) AS ' || src;
 
-      BEGIN
-         /* set "search_path" so that the function body can reference objects without schema */
-         EXECUTE format('SET LOCAL search_path = %I', sch);
+      IF NOT execute_statement(
+         operation => 'create view',
+         schema => sch,
+         object_name => vname,
+         stmt => stmt,
+         pgstage_schema => pgstage_schema
+      ) THEN
+         rc := rc + 1;
+      END IF;
 
-         EXECUTE stmt;
-
-         EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
-      EXCEPTION
-         WHEN others THEN
-            /* turn the error into a warning */
-            GET STACKED DIAGNOSTICS
-               errmsg := MESSAGE_TEXT,
-               detail := PG_EXCEPTION_DETAIL;
-            RAISE WARNING 'Error creating view %.%', sch, vname
-               USING DETAIL = errmsg || coalesce(': ' || detail, '');
-
-            EXECUTE
-               format(
-                  E'INSERT INTO %I.migrate_log\n'
-                  '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                  'VALUES (\n'
-                  '   ''create view'',\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L\n'
-                  ')',
-                  pgstage_schema,
-                  sch,
-                  vname,
-                  stmt,
-                  errmsg || coalesce(': ' || detail, '')
-               );
-
-            rc := rc + 1;
-      END;
+      EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
    END LOOP;
 
    /* reset client_min_messages */
@@ -1762,8 +1624,6 @@ $$DECLARE
    uniq                   boolean;
    des                    boolean;
    is_expr                boolean;
-   errmsg                 text;
-   detail                 text;
    rc                     integer := 0;
 BEGIN
    /* remember old setting */
@@ -1812,41 +1672,20 @@ BEGIN
    LOOP
       IF old_s <> loc_s OR old_t <> loc_t OR old_i <> ind_name THEN
          IF old_t <> '' THEN
-            BEGIN
-               stmt := stmt || ')';
-               IF stmt_wher_expr <> '' THEN
-                  stmt := stmt || ' WHERE ' || stmt_wher_expr;
-               END IF;
-               EXECUTE stmt;
-            EXCEPTION
-               WHEN others THEN
-                  /* turn the error into a warning */
-                  GET STACKED DIAGNOSTICS
-                     errmsg := MESSAGE_TEXT,
-                     detail := PG_EXCEPTION_DETAIL;
-                  RAISE WARNING 'Error executing "%"', stmt
-                     USING DETAIL = errmsg || coalesce(': ' || detail, '');
+            stmt := stmt || ')';
+            IF stmt_wher_expr <> '' THEN
+               stmt := stmt || ' WHERE ' || stmt_wher_expr;
+            END IF;
 
-                  EXECUTE
-                     format(
-                        E'INSERT INTO %I.migrate_log\n'
-                        '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                        'VALUES (\n'
-                        '   ''create index'',\n'
-                        '   %L,\n'
-                        '   %L,\n'
-                        '   %L,\n'
-                        '   %L\n'
-                        ')',
-                        pgstage_schema,
-                        old_s,
-                        old_t,
-                        stmt,
-                        errmsg || coalesce(': ' || detail, '')
-                     );
-
-                  rc := rc + 1;
-            END;
+            IF NOT execute_statement(
+               operation => 'create index',
+               schema => old_s,
+               object_name => old_t,
+               stmt => stmt,
+               pgstage_schema => pgstage_schema
+            ) THEN
+               rc := rc + 1;
+            END IF;
          END IF;
 
          stmt := format('CREATE %sINDEX %I ON %I.%I (',
@@ -1875,41 +1714,20 @@ BEGIN
    END LOOP;
 
    IF old_t <> '' THEN
-      BEGIN
-         stmt := stmt || ')';
-         IF stmt_wher_expr <> '' THEN
-            stmt := stmt || ' WHERE ' || stmt_wher_expr;
-         END IF;
-         EXECUTE stmt;
-      EXCEPTION
-         WHEN others THEN
-            /* turn the error into a warning */
-            GET STACKED DIAGNOSTICS
-               errmsg := MESSAGE_TEXT,
-               detail := PG_EXCEPTION_DETAIL;
-            RAISE WARNING 'Error executing "%"', stmt
-               USING DETAIL = errmsg || coalesce(': ' || detail, '');
+      stmt := stmt || ')';
+      IF stmt_wher_expr <> '' THEN
+         stmt := stmt || ' WHERE ' || stmt_wher_expr;
+      END IF;
 
-            EXECUTE
-               format(
-                  E'INSERT INTO %I.migrate_log\n'
-                  '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                  'VALUES (\n'
-                  '   ''create index'',\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L\n'
-                  ')',
-                  pgstage_schema,
-                  old_s,
-                  old_t,
-                  stmt,
-                  errmsg || coalesce(': ' || detail, '')
-               );
-
-            rc := rc + 1;
-      END;
+      IF NOT execute_statement(
+         operation => 'create index',
+         schema => old_s,
+         object_name => old_t,
+         stmt => stmt,
+         pgstage_schema => pgstage_schema
+      ) THEN
+         rc := rc + 1;
+      END IF;
    END IF;
 
    /* reset client_min_messages */
@@ -1951,8 +1769,6 @@ $$DECLARE
    rem_colname            name;
    prim                   boolean;
    expr                   text;
-   errmsg                 text;
-   detail                 text;
    rc                     integer := 0;
 BEGIN
    /* remember old setting */
@@ -1999,37 +1815,17 @@ BEGIN
    LOOP
       IF old_s <> loc_s OR old_t <> loc_t OR old_c <> cons_name THEN
          IF old_t <> '' THEN
-            BEGIN
-                  EXECUTE stmt || stmt_suffix;
-            EXCEPTION
-               WHEN others THEN
-                  /* turn the error into a warning */
-                  GET STACKED DIAGNOSTICS
-                     errmsg := MESSAGE_TEXT,
-                     detail := PG_EXCEPTION_DETAIL;
-                  RAISE WARNING 'Error creating primary key or unique constraint on table %.%', old_s, old_t
-                     USING DETAIL = errmsg || coalesce(': ' || detail, '');
+            stmt := stmt || stmt_suffix;
 
-                  EXECUTE
-                     format(
-                        E'INSERT INTO %I.migrate_log\n'
-                        '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                        'VALUES (\n'
-                        '   ''unique constraint'',\n'
-                        '   %L,\n'
-                        '   %L,\n'
-                        '   %L,\n'
-                        '   %L\n'
-                        ')',
-                        pgstage_schema,
-                        old_s,
-                        old_t,
-                        stmt || stmt_suffix,
-                        errmsg || coalesce(': ' || detail, '')
-                     );
-
-                  rc := rc + 1;
-            END;
+            IF NOT execute_statement(
+               operation => 'unique constraint',
+               schema => old_s,
+               object_name => old_t,
+               stmt => stmt,
+               pgstage_schema => pgstage_schema
+            ) THEN
+               rc := rc + 1;
+            END IF;
          END IF;
 
          stmt := format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s (', loc_s, loc_t, cons_name,
@@ -2048,38 +1844,17 @@ BEGIN
    END LOOP;
 
    IF old_t <> '' THEN
-      BEGIN
-         EXECUTE stmt || stmt_suffix;
-      EXCEPTION
-         WHEN others THEN
-            /* turn the error into a warning */
-            GET STACKED DIAGNOSTICS
-               errmsg := MESSAGE_TEXT,
-               detail := PG_EXCEPTION_DETAIL;
-            RAISE WARNING 'Error creating primary key or unique constraint on table %.%',
-                          old_s, old_t
-               USING DETAIL = errmsg || coalesce(': ' || detail, '');
+      stmt := stmt || stmt_suffix;
 
-            EXECUTE
-               format(
-                  E'INSERT INTO %I.migrate_log\n'
-                  '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                  'VALUES (\n'
-                  '   ''unique constraint'',\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L\n'
-                  ')',
-                  pgstage_schema,
-                  old_s,
-                  old_t,
-                  stmt || stmt_suffix,
-                  errmsg || coalesce(': ' || detail, '')
-               );
-
-            rc := rc + 1;
-      END;
+      IF NOT execute_statement(
+         operation => 'unique constraint',
+         schema => old_s,
+         object_name => old_t,
+         stmt => stmt,
+         pgstage_schema => pgstage_schema
+      ) THEN
+         rc := rc + 1;
+      END IF;
    END IF;
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
@@ -2106,37 +1881,17 @@ BEGIN
    LOOP
       IF old_s <> loc_s OR old_t <> loc_t OR old_c <> cons_name THEN
          IF old_t <> '' THEN
-            BEGIN
-               EXECUTE stmt || stmt_middle || stmt_suffix;
-            EXCEPTION
-               WHEN others THEN
-                  /* turn the error into a warning */
-                  GET STACKED DIAGNOSTICS
-                     errmsg := MESSAGE_TEXT,
-                     detail := PG_EXCEPTION_DETAIL;
-                  RAISE WARNING 'Error creating foreign key constraint on table %.%', old_s, old_t
-                     USING DETAIL = errmsg || coalesce(': ' || detail, '');
+            stmt := stmt || stmt_middle || stmt_suffix;
 
-                  EXECUTE
-                     format(
-                        E'INSERT INTO %I.migrate_log\n'
-                        '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                        'VALUES (\n'
-                        '   ''foreign key constraint'',\n'
-                        '   %L,\n'
-                        '   %L,\n'
-                        '   %L,\n'
-                        '   %L\n'
-                        ')',
-                        pgstage_schema,
-                        old_s,
-                        old_t,
-                        stmt || stmt_middle || stmt_suffix,
-                        errmsg || coalesce(': ' || detail, '')
-                     );
-
-                  rc := rc + 1;
-            END;
+            IF NOT execute_statement(
+               operation => 'foreign key constraint',
+               schema => old_s,
+               object_name => old_t,
+               stmt => stmt,
+               pgstage_schema => pgstage_schema
+            ) THEN
+               rc := rc + 1;
+            END IF;
          END IF;
 
          stmt := format('ALTER TABLE %I.%I ADD CONSTRAINT %I FOREIGN KEY (', loc_s, loc_t, cons_name);
@@ -2157,37 +1912,17 @@ BEGIN
    END LOOP;
 
    IF old_t <> '' THEN
-      BEGIN
-         EXECUTE stmt || stmt_middle || stmt_suffix;
-      EXCEPTION
-         WHEN others THEN
-            /* turn the error into a warning */
-            GET STACKED DIAGNOSTICS
-               errmsg := MESSAGE_TEXT,
-               detail := PG_EXCEPTION_DETAIL;
-            RAISE WARNING 'Error creating foreign key constraint on table %.%', old_s, old_t
-               USING DETAIL = errmsg || coalesce(': ' || detail, '');
+      stmt := stmt || stmt_middle || stmt_suffix;
 
-            EXECUTE
-               format(
-                  E'INSERT INTO %I.migrate_log\n'
-                  '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                  'VALUES (\n'
-                  '   ''foreign key constraint'',\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L\n'
-                  ')',
-                  pgstage_schema,
-                  old_s,
-                  old_t,
-                  stmt || stmt_middle || stmt_suffix,
-                  errmsg || coalesce(': ' || detail, '')
-               );
-
-            rc := rc + 1;
-      END;
+      IF NOT execute_statement(
+         operation => 'foreign key constraint',
+         schema => old_s,
+         object_name => old_t,
+         stmt => stmt,
+         pgstage_schema => pgstage_schema
+      ) THEN
+         rc := rc + 1;
+      END IF;
    END IF;
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
@@ -2203,37 +1938,17 @@ BEGIN
       WHERE t.migrate
         AND c.migrate
    LOOP
-      BEGIN
-         EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK (%s)', loc_s, loc_t, cons_name, expr);
-      EXCEPTION
-         WHEN others THEN
-            /* turn the error into a warning */
-            GET STACKED DIAGNOSTICS
-               errmsg := MESSAGE_TEXT,
-               detail := PG_EXCEPTION_DETAIL;
-            RAISE WARNING 'Error creating CHECK constraint on table %.% with expression "%"', loc_s, loc_t, expr
-               USING DETAIL = errmsg || coalesce(': ' || detail, '');
+      stmt := format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK (%s)', loc_s, loc_t, cons_name, expr);
 
-            EXECUTE
-               format(
-                  E'INSERT INTO %I.migrate_log\n'
-                  '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                  'VALUES (\n'
-                  '   ''check constraint'',\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L\n'
-                  ')',
-                  pgstage_schema,
-                  loc_s,
-                  loc_t,
-                  format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK (%s)', loc_s, loc_t, cons_name, expr),
-                  errmsg || coalesce(': ' || detail, '')
-               );
-
-            rc := rc + 1;
-      END;
+      IF NOT execute_statement(
+         operation => 'check constraint',
+         schema => loc_s,
+         object_name => loc_t,
+         stmt => stmt,
+         pgstage_schema => pgstage_schema
+      ) THEN
+         rc := rc + 1;
+      END IF;
    END LOOP;
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
@@ -2249,40 +1964,18 @@ BEGIN
       WHERE t.migrate
         AND c.default_value IS NOT NULL
    LOOP
-      BEGIN
-         EXECUTE format('ALTER TABLE %I.%I ALTER %I SET DEFAULT %s',
-                        loc_s, loc_t, colname, expr);
-      EXCEPTION
-         WHEN others THEN
-            /* turn the error into a warning */
-            GET STACKED DIAGNOSTICS
-               errmsg := MESSAGE_TEXT,
-               detail := PG_EXCEPTION_DETAIL;
-            RAISE WARNING 'Error setting default value on % of table %.% to "%"',
-                          colname, loc_s, loc_t, expr
-               USING DETAIL = errmsg || coalesce(': ' || detail, '');
+      stmt := format('ALTER TABLE %I.%I ALTER %I SET DEFAULT %s',
+                      loc_s, loc_t, colname, expr);
 
-            EXECUTE
-               format(
-                  E'INSERT INTO %I.migrate_log\n'
-                  '   (operation, schema_name, object_name, failed_sql, error_message)\n'
-                  'VALUES (\n'
-                  '   ''column default'',\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L,\n'
-                  '   %L\n'
-                  ')',
-                  pgstage_schema,
-                  loc_s,
-                  loc_t,
-                  format('ALTER TABLE %I.%I ALTER %I SET DEFAULT %s',
-                         loc_s, loc_t, colname, expr),
-                  errmsg || coalesce(': ' || detail, '')
-               );
-
-            rc := rc + 1;
-      END;
+      IF NOT execute_statement(
+         operation => 'column default',
+         schema => loc_s,
+         object_name => loc_t,
+         stmt => stmt,
+         pgstage_schema => pgstage_schema
+      ) THEN
+         rc := rc + 1;
+      END IF;
    END LOOP;
 
    /* reset client_min_messages */
@@ -2405,3 +2098,48 @@ END;$$;
 
 COMMENT ON FUNCTION db_migrate(name,name,name,name,name[],jsonb,boolean) IS
    'migrate a remote database from a foreign server to PostgreSQL';
+
+CREATE FUNCTION execute_statement(
+   operation      text,
+   schema         name,
+   object_name    name,
+   stmt           text,
+   pgstage_schema name DEFAULT NAME 'pgsql_stage'
+) RETURNS boolean
+  LANGUAGE plpgsql VOLATILE STRICT SET search_path = pg_catalog AS
+$$DECLARE
+   errmsg text;
+   detail text;
+BEGIN
+   EXECUTE stmt;
+   RETURN TRUE;
+EXCEPTION
+   WHEN others THEN
+      /* turn the error into a warning */
+      GET STACKED DIAGNOSTICS
+         errmsg := MESSAGE_TEXT,
+         detail := PG_EXCEPTION_DETAIL;
+      RAISE WARNING 'Error executing "%"', stmt
+         USING DETAIL = errmsg || coalesce(': ' || detail, '');
+
+      EXECUTE
+         format(
+            E'INSERT INTO %I.migrate_log\n'
+            '   (operation, schema_name, object_name, failed_sql, error_message)\n'
+            'VALUES (\n'
+            '   %L,\n'
+            '   %L,\n'
+            '   %L,\n'
+            '   %L,\n'
+            '   %L\n'
+            ')',
+            pgstage_schema,
+            operation,
+            schema,
+            object_name,
+            stmt,
+            errmsg || coalesce(': ' || detail, '')
+         );
+
+      RETURN FALSE;
+END$$;
