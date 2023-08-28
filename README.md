@@ -348,6 +348,8 @@ are done with the migration.
 ### `partitions` ###
 
 Delete rows from this table if you don't want a partitioned table in PostgreSQL.
+Alternatively, you can add rows if you want to migrate a non-partitioned table
+to a partitioned PostgreSQL table.
 
 - `schema` (type `name`): schema of the partitioned table
 
@@ -383,7 +385,8 @@ Delete rows from this table if you don't want a partitioned table in PostgreSQL.
 ### `subpartitions` ###
 
 Delete rows from this table if you don't want a subpartitioned table in
-PostgreSQL.
+PostgreSQL.  Alternatively, you can add rows if you want to migrate a table
+without subpartitions to a PostgreSQL table with subpartitions.
 
 - `schema` (type `name`): schema of the partitioned table
 
