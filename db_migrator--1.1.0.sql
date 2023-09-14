@@ -21,7 +21,6 @@ CREATE FUNCTION materialize_foreign_table(
    LANGUAGE plpgsql VOLATILE STRICT SET search_path = pg_catalog AS
 $$DECLARE
    extschema          text;
-   result             boolean = TRUE;
    ft                 name;
    stmt               text;
    cur_partitions     refcursor;
@@ -47,13 +46,15 @@ BEGIN
    /* rename the foreign table */
    ft := substr(table_name, 1, 62) || E'\x07';
    stmt := format('ALTER FOREIGN TABLE %I.%I RENAME TO %I', schema, table_name, ft);
-   result := result AND execute_statement(
+   IF NOT execute_statement(
       operation => 'rename foreign table',
       schema => schema,
       object_name => table_name,
       stmt => stmt,
       pgstage_schema => pgstage_schema
-   );
+   ) THEN
+      RETURN false;
+   END IF;
 
    /* start a CREATE TABLE statement */
    stmt := format('CREATE TABLE %I.%I (LIKE %I.%I)', schema, table_name, schema, ft);
@@ -83,13 +84,15 @@ BEGIN
    END IF;
 
    /* create the table */
-   result := result AND execute_statement(
+   IF NOT execute_statement(
       operation => 'create table',
       schema => schema,
       object_name => table_name,
       stmt => stmt,
       pgstage_schema => pgstage_schema
-   );
+   ) THEN
+      RETURN false;
+   END IF;
 
    /* iterate through the table's partitions (first one is already fetched) */
    IF partition_count > 0 THEN
@@ -141,13 +144,15 @@ BEGIN
          END IF;
 
          /* create the partition */
-         result := result AND execute_statement(
+         IF NOT execute_statement(
             operation => 'create table partition',
             schema => schema,
             object_name => table_name,
             stmt => stmt,
             pgstage_schema => pgstage_schema
-         );
+         ) THEN
+            RETURN false;
+         END IF;
 
          /* iterate through the subpartitions (first one is already fetched) */
          IF subpartition_count > 0 THEN
@@ -176,13 +181,15 @@ BEGIN
                         );
 
                /* create the subpartition */
-               result := result AND execute_statement(
+               IF NOT execute_statement(
                   operation => 'create table subpartition',
                   schema => schema,
                   object_name => table_name,
                   stmt => stmt,
                   pgstage_schema => pgstage_schema
-               );
+               ) THEN
+                  RETURN false;
+               END IF;
 
                FETCH FROM cur_subpartitions INTO
                   v_schema, v_table, v_partition, v_subpartition,
@@ -207,26 +214,27 @@ BEGIN
    /* move the data if desired */
    IF with_data THEN
       stmt := format('INSERT INTO %I.%I SELECT * FROM %I.%I', schema, table_name, schema, ft);
-      result := result AND execute_statement(
+      IF NOT execute_statement(
          operation => 'copy table data',
          schema => schema,
          object_name => table_name,
          stmt => stmt,
          pgstage_schema => pgstage_schema
-      );
+      ) THEN
+         RETURN false;
+      END IF;
    END IF;
 
    /* drop the foreign table */
    stmt := format('DROP FOREIGN TABLE %I.%I', schema, ft);
-   result := result AND execute_statement(
+
+   RETURN execute_statement(
       operation => 'copy table data',
       schema => schema,
       object_name => table_name,
       stmt => stmt,
       pgstage_schema => pgstage_schema
    );
-
-   RETURN result;
 END;$$;
 
 COMMENT ON FUNCTION materialize_foreign_table(name,name,boolean,name) IS
