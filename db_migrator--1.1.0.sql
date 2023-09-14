@@ -43,177 +43,198 @@ BEGIN
 
    EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, extschema);
 
-   /* rename the foreign table */
-   ft := substr(table_name, 1, 62) || E'\x07';
-   stmt := format('ALTER FOREIGN TABLE %I.%I RENAME TO %I', schema, table_name, ft);
-   IF NOT execute_statement(
-      operation => 'rename foreign table',
-      schema => schema,
-      object_name => table_name,
-      stmt => stmt,
-      pgstage_schema => pgstage_schema
-   ) THEN
-      RETURN false;
-   END IF;
+   /* use an explicit transaction block to roll back if any of the steps fail*/
+   BEGIN
+      /* rename the foreign table */
+      ft := substr(table_name, 1, 62) || E'\x07';
+      stmt := format('ALTER FOREIGN TABLE %I.%I RENAME TO %I', schema, table_name, ft);
+      IF NOT execute_statement(
+         operation => 'rename foreign table',
+         schema => schema,
+         object_name => table_name,
+         stmt => stmt,
+         pgstage_schema => pgstage_schema
+      ) THEN
+         ROLLBACK;
+         RETURN false;
+      END IF;
 
-   /* start a CREATE TABLE statement */
-   stmt := format('CREATE TABLE %I.%I (LIKE %I.%I)', schema, table_name, schema, ft);
+      /* start a CREATE TABLE statement */
+      stmt := format('CREATE TABLE %I.%I (LIKE %I.%I)', schema, table_name, schema, ft);
 
-   /* cursor for partitions */
-   OPEN cur_partitions FOR EXECUTE
-      format(
-         E'SELECT schema, table_name, partition_name, type, key, is_default, values\n'
-         'FROM %I.partitions\n'
-         'WHERE schema = $1 AND table_name = $2',
-         pgstage_schema
-      )
-      USING schema, table_name;
+      /* cursor for partitions */
+      OPEN cur_partitions FOR EXECUTE
+         format(
+            E'SELECT schema, table_name, partition_name, type, key, is_default, values\n'
+            'FROM %I.partitions\n'
+            'WHERE schema = $1 AND table_name = $2',
+            pgstage_schema
+         )
+         USING schema, table_name;
 
-   /* the number of result rows is the partition count */
-   MOVE FORWARD ALL IN cur_partitions;
-   GET DIAGNOSTICS partition_count = ROW_COUNT;
-   MOVE ABSOLUTE 0 IN cur_partitions;
+      /* the number of result rows is the partition count */
+      MOVE FORWARD ALL IN cur_partitions;
+      GET DIAGNOSTICS partition_count = ROW_COUNT;
+      MOVE ABSOLUTE 0 IN cur_partitions;
 
-   FETCH cur_partitions INTO
-      v_schema, v_table, v_partition,
-      v_type, v_exp, v_default, v_values;
+      FETCH cur_partitions INTO
+         v_schema, v_table, v_partition,
+         v_type, v_exp, v_default, v_values;
 
-   /* add a partitioning clause if appropriate */
-   IF partition_count > 0 THEN
-      stmt := format('%s PARTITION BY %s (%s)', stmt, v_type, v_exp);
-   END IF;
+      /* add a partitioning clause if appropriate */
+      IF partition_count > 0 THEN
+         stmt := format('%s PARTITION BY %s (%s)', stmt, v_type, v_exp);
+      END IF;
 
-   /* create the table */
-   IF NOT execute_statement(
-      operation => 'create table',
-      schema => schema,
-      object_name => table_name,
-      stmt => stmt,
-      pgstage_schema => pgstage_schema
-   ) THEN
-      RETURN false;
-   END IF;
+      /* create the table */
+      IF NOT execute_statement(
+         operation => 'create table',
+         schema => schema,
+         object_name => table_name,
+         stmt => stmt,
+         pgstage_schema => pgstage_schema
+      ) THEN
+         ROLLBACK;
+         RETURN false;
+      END IF;
 
-   /* iterate through the table's partitions (first one is already fetched) */
-   IF partition_count > 0 THEN
-      LOOP
-         stmt := format(
-                     'CREATE TABLE %1$I.%3$I PARTITION OF %1$I.%2$I %4$s',
-                     v_schema, v_table, v_partition,
-                     CASE WHEN v_default
-                           THEN 'DEFAULT'
-                           WHEN v_type = 'LIST'
-                           THEN format(
-                                 'FOR VALUES IN (%s)',
-                                 array_to_string(v_values, ',')
-                              )
-                           WHEN v_type = 'RANGE'
-                           THEN format(
-                                 'FOR VALUES FROM (%s) TO (%s)',
-                                 v_values[1], v_values[2]
-                              )
-                           WHEN v_type = 'HASH'
-                           THEN format(
-                                 'FOR VALUES WITH (modulus %s, remainder %s)',
-                                 partition_count, v_values[1]
-                              )
-                     END
-                  );
+      /* iterate through the table's partitions (first one is already fetched) */
+      IF partition_count > 0 THEN
+         LOOP
+            stmt := format(
+                        'CREATE TABLE %1$I.%3$I PARTITION OF %1$I.%2$I %4$s',
+                        v_schema, v_table, v_partition,
+                        CASE WHEN v_default
+                              THEN 'DEFAULT'
+                              WHEN v_type = 'LIST'
+                              THEN format(
+                                    'FOR VALUES IN (%s)',
+                                    array_to_string(v_values, ',')
+                                 )
+                              WHEN v_type = 'RANGE'
+                              THEN format(
+                                    'FOR VALUES FROM (%s) TO (%s)',
+                                    v_values[1], v_values[2]
+                                 )
+                              WHEN v_type = 'HASH'
+                              THEN format(
+                                    'FOR VALUES WITH (modulus %s, remainder %s)',
+                                    partition_count, v_values[1]
+                                 )
+                        END
+                     );
 
-         /* cursor for the partition's subpartitions */
-         OPEN cur_subpartitions FOR EXECUTE
-            format(
-               E'SELECT schema, table_name, partition_name, subpartition_name, type, key, is_default, values\n'
-               'FROM %I.subpartitions\n'
-               'WHERE schema = $1 AND table_name = $2 AND partition_name = $3',
-               pgstage_schema
-            )
-            USING schema, table_name, v_partition;
+            /* cursor for the partition's subpartitions */
+            OPEN cur_subpartitions FOR EXECUTE
+               format(
+                  E'SELECT schema, table_name, partition_name, subpartition_name, type, key, is_default, values\n'
+                  'FROM %I.subpartitions\n'
+                  'WHERE schema = $1 AND table_name = $2 AND partition_name = $3',
+                  pgstage_schema
+               )
+               USING schema, table_name, v_partition;
 
-         /* the number of result rows is the sub partition count */
-         MOVE FORWARD ALL IN cur_subpartitions;
-         GET DIAGNOSTICS subpartition_count = ROW_COUNT;
-         MOVE ABSOLUTE 0 IN cur_subpartitions;
+            /* the number of result rows is the sub partition count */
+            MOVE FORWARD ALL IN cur_subpartitions;
+            GET DIAGNOSTICS subpartition_count = ROW_COUNT;
+            MOVE ABSOLUTE 0 IN cur_subpartitions;
 
-         FETCH cur_subpartitions INTO
-            v_schema, v_table, v_partition, v_subpartition,
-            v_type, v_exp, v_default, v_values;
+            FETCH cur_subpartitions INTO
+               v_schema, v_table, v_partition, v_subpartition,
+               v_type, v_exp, v_default, v_values;
 
-         IF subpartition_count > 0 THEN
-            stmt := format('%s PARTITION BY %s (%s)', stmt, v_type, v_exp);
-         END IF;
+            IF subpartition_count > 0 THEN
+               stmt := format('%s PARTITION BY %s (%s)', stmt, v_type, v_exp);
+            END IF;
 
-         /* create the partition */
+            /* create the partition */
+            IF NOT execute_statement(
+               operation => 'create table partition',
+               schema => schema,
+               object_name => table_name,
+               stmt => stmt,
+               pgstage_schema => pgstage_schema
+            ) THEN
+               ROLLBACK;
+               RETURN false;
+            END IF;
+
+            /* iterate through the subpartitions (first one is already fetched) */
+            IF subpartition_count > 0 THEN
+               LOOP
+                  stmt := format(
+                              'CREATE TABLE %1$I.%3$I PARTITION OF %1$I.%2$I %4$s',
+                              v_schema, v_partition, v_subpartition,
+                              CASE WHEN v_default
+                                    THEN 'DEFAULT'
+                                    WHEN v_type = 'LIST'
+                                    THEN format(
+                                          'FOR VALUES IN (%s)',
+                                          array_to_string(v_values, ',')
+                                       )
+                                    WHEN v_type = 'RANGE'
+                                    THEN format(
+                                          'FOR VALUES FROM (%s) TO (%s)',
+                                          v_values[1], v_values[2]
+                                       )
+                                    WHEN v_type = 'HASH'
+                                    THEN format(
+                                          'FOR VALUES WITH (modulus %s, remainder %s)',
+                                          subpartition_count, v_values[1]
+                                       )
+                              END
+                           );
+
+                  /* create the subpartition */
+                  IF NOT execute_statement(
+                     operation => 'create table subpartition',
+                     schema => schema,
+                     object_name => table_name,
+                     stmt => stmt,
+                     pgstage_schema => pgstage_schema
+                  ) THEN
+                     ROLLBACK;
+                     RETURN false;
+                  END IF;
+
+                  FETCH FROM cur_subpartitions INTO
+                     v_schema, v_table, v_partition, v_subpartition,
+                     v_type, v_exp, v_default, v_values;
+
+                  EXIT WHEN NOT FOUND;
+               END LOOP;
+            END IF;
+
+            CLOSE cur_subpartitions;
+
+            FETCH cur_partitions INTO
+               v_schema, v_table, v_partition,
+               v_type, v_exp, v_default, v_values;
+
+            EXIT WHEN NOT FOUND;
+         END LOOP;
+      END IF;
+
+      CLOSE cur_partitions;
+
+      /* move the data if desired */
+      IF with_data THEN
+         stmt := format('INSERT INTO %I.%I SELECT * FROM %I.%I', schema, table_name, schema, ft);
          IF NOT execute_statement(
-            operation => 'create table partition',
+            operation => 'copy table data',
             schema => schema,
             object_name => table_name,
             stmt => stmt,
             pgstage_schema => pgstage_schema
          ) THEN
+            ROLLBACK;
             RETURN false;
          END IF;
+      END IF;
 
-         /* iterate through the subpartitions (first one is already fetched) */
-         IF subpartition_count > 0 THEN
-            LOOP
-               stmt := format(
-                           'CREATE TABLE %1$I.%3$I PARTITION OF %1$I.%2$I %4$s',
-                           v_schema, v_partition, v_subpartition,
-                           CASE WHEN v_default
-                                 THEN 'DEFAULT'
-                                 WHEN v_type = 'LIST'
-                                 THEN format(
-                                       'FOR VALUES IN (%s)',
-                                       array_to_string(v_values, ',')
-                                    )
-                                 WHEN v_type = 'RANGE'
-                                 THEN format(
-                                       'FOR VALUES FROM (%s) TO (%s)',
-                                       v_values[1], v_values[2]
-                                    )
-                                 WHEN v_type = 'HASH'
-                                 THEN format(
-                                       'FOR VALUES WITH (modulus %s, remainder %s)',
-                                       subpartition_count, v_values[1]
-                                    )
-                           END
-                        );
+      /* drop the foreign table */
+      stmt := format('DROP FOREIGN TABLE %I.%I', schema, ft);
 
-               /* create the subpartition */
-               IF NOT execute_statement(
-                  operation => 'create table subpartition',
-                  schema => schema,
-                  object_name => table_name,
-                  stmt => stmt,
-                  pgstage_schema => pgstage_schema
-               ) THEN
-                  RETURN false;
-               END IF;
-
-               FETCH FROM cur_subpartitions INTO
-                  v_schema, v_table, v_partition, v_subpartition,
-                  v_type, v_exp, v_default, v_values;
-
-               EXIT WHEN NOT FOUND;
-            END LOOP;
-         END IF;
-
-         CLOSE cur_subpartitions;
-
-         FETCH cur_partitions INTO
-            v_schema, v_table, v_partition,
-            v_type, v_exp, v_default, v_values;
-
-         EXIT WHEN NOT FOUND;
-      END LOOP;
-   END IF;
-
-   CLOSE cur_partitions;
-
-   /* move the data if desired */
-   IF with_data THEN
-      stmt := format('INSERT INTO %I.%I SELECT * FROM %I.%I', schema, table_name, schema, ft);
       IF NOT execute_statement(
          operation => 'copy table data',
          schema => schema,
@@ -221,20 +242,12 @@ BEGIN
          stmt => stmt,
          pgstage_schema => pgstage_schema
       ) THEN
+         ROLLBACK;
          RETURN false;
-      END IF;
-   END IF;
+      END IF; 
+   END;
 
-   /* drop the foreign table */
-   stmt := format('DROP FOREIGN TABLE %I.%I', schema, ft);
-
-   RETURN execute_statement(
-      operation => 'copy table data',
-      schema => schema,
-      object_name => table_name,
-      stmt => stmt,
-      pgstage_schema => pgstage_schema
-   );
+   RETURN true;
 END;$$;
 
 COMMENT ON FUNCTION materialize_foreign_table(name,name,boolean,name) IS
