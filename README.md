@@ -733,33 +733,6 @@ This function calls `materialize_foreign_table` to replace all foreign tables
 created by `db_migrate_mkforeign` with actual tables.
 The table data are migrated unless `with_data` is `FALSE`.
 
-### `materialize_foreign_table` ###
-
-Parameters:
-
-- `schema` (type `name`, required): schema of the table to migrate
-
-- `table_name` (type `name`, required): name of the table to migrate
-
-- `with_data` (type `boolean`, default `TRUE`): if `FALSE`, migrate everything
-  but the table data
-
-  This is useful to test the migration of the metadata.
-
-- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
-  Postgres staging schema
-
-This function replaces a single foreign table created by `db_migrate_mkforeign`
-with an actual table.
-If there are any entries for this table in the `partitions` tables, the table
-will be created as a partitioned table.  Subpartitions are created if there are
-corresponding entries in `subpartitions`.
-The table data are migrated unless `with_data` is `FALSE`.
-
-You don't need this function if you use `db_migrate_tables`.  It is provided as
-a low-level alternative and is particularly useful if you want to migrate
-several tables in parallel to improve processing speed.
-
 ### `db_migrate_functions` ###
 
 Parameters:
@@ -890,6 +863,58 @@ modifications necessary).
 
 Note that it will not migrate functions and triggers, since `migrate`
 is `FALSE` by default for these objects.
+
+Low-level migration functions
+-----------------------------
+
+These functions are called by migration functions detailed above.
+
+They are provided as a low-level alternative and are particularly useful if you
+want to migrate several relations in parallel to improve processing speed with
+your own external tools.
+
+
+### `materialize_foreign_table` ###
+
+Parameters:
+
+- `schema` (type `name`, required): schema of the table to migrate
+
+- `table_name` (type `name`, required): name of the table to migrate
+
+- `with_data` (type `boolean`, default `TRUE`): if `FALSE`, migrate everything
+  but the table data
+
+  This is useful to test the migration of the metadata.
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+This function replaces a single foreign table created by `db_migrate_mkforeign`
+with an actual table.
+If there are any entries for this table in the `partitions` tables, the table
+will be created as a partitioned table.  Subpartitions are created if there are
+corresponding entries in `subpartitions`.
+The table data are migrated unless `with_data` is `FALSE`.
+
+## `execute_statement` ###
+
+Parameters:
+
+- `operation` (type `text`, required): arbitrary operation description
+
+- `schema` (type `name`, required): schema of the statement related object
+
+- `object_name` (type `name`, required): name of the relation concerned by the
+  statement
+
+- `stmt` (type `text`, required): statement to execute
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the Postgres
+  staging schema where the `migrate_log` table has been created
+
+This function executes a SQL statement with logging errors into `migrate_log`
+table and returns `false` on failure.
 
 Plugin API
 ==========
