@@ -897,7 +897,7 @@ will be created as a partitioned table.  Subpartitions are created if there are
 corresponding entries in `subpartitions`.
 The table data are migrated unless `with_data` is `FALSE`.
 
-## `execute_statement` ###
+## `execute_statements` ###
 
 Parameters:
 
@@ -908,7 +908,8 @@ Parameters:
 - `object_name` (type `name`, required): name of the relation concerned by the
   statement
 
-- `stmt` (type `text`, required): statement to execute
+- `statements` (type `text[]`, required): statements to execute in the same
+  subtransaction
 
 - `pgstage_schema` (type `name`, default `pgsql_stage`): name of the Postgres
   staging schema where the `migrate_log` table has been created
