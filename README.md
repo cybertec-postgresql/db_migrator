@@ -903,10 +903,10 @@ Parameters:
 
 - `operation` (type `text`, required): arbitrary operation description
 
-- `schema` (type `name`, required): schema of the statement related object
+- `schema` (type `name`, required): schema of the statements related object
 
 - `object_name` (type `name`, required): name of the relation concerned by the
-  statement
+  statements
 
 - `statements` (type `text[]`, required): statements to execute in the same
   subtransaction
@@ -914,8 +914,11 @@ Parameters:
 - `pgstage_schema` (type `name`, default `pgsql_stage`): name of the Postgres
   staging schema where the `migrate_log` table has been created
 
-This function executes a SQL statement with logging errors into `migrate_log`
-table and returns `false` on failure.
+This function iterates through an array of SQL statements and executes them
+inside a subtransaction. If one fails, it raises a detailed warning and inserts
+the failed statement and its context into `migrate_log` table and all previous
+successful statements in the subtransaction are rollbacked. 
+Returns `false` on failure.
 
 Plugin API
 ==========
