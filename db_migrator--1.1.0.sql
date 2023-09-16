@@ -135,7 +135,7 @@ BEGIN
          IF subpartition_count > 0 THEN
             LOOP
                /* create the subpartition */
-               statements := statements || 
+               statements := statements ||
                   format(
                      'CREATE TABLE %1$I.%3$I PARTITION OF %1$I.%2$I %4$s',
                      v_schema, v_partition, v_subpartition,
@@ -181,12 +181,12 @@ BEGIN
 
    /* move the data if desired */
    IF with_data THEN
-      statements := statements || 
+      statements := statements ||
          format('INSERT INTO %I.%I SELECT * FROM %I.%I', schema, table_name, schema, ft);
    END IF;
 
    /* drop the foreign table */
-   statements := statements || 
+   statements := statements ||
       format('DROP FOREIGN TABLE %I.%I', schema, ft);
 
    IF NOT execute_statements(
