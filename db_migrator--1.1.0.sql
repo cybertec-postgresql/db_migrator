@@ -20,7 +20,6 @@ CREATE FUNCTION materialize_foreign_table(
 ) RETURNS boolean
    LANGUAGE plpgsql VOLATILE STRICT SET search_path = pg_catalog AS
 $$DECLARE
-   extschema          text;
    ft                 name;
    stmt               text;
    statements         text[];
@@ -38,11 +37,7 @@ $$DECLARE
    v_default          boolean;
 BEGIN
    /* set "search_path" to the PostgreSQL stage, and extension schema */
-   SELECT extnamespace::regnamespace::text INTO extschema
-   FROM pg_extension
-   WHERE extname = 'db_migrator';
-
-   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, extschema);
+   EXECUTE format('SET LOCAL search_path = %I, @extschema@', pgstage_schema);
 
    /* rename the foreign table */
    ft := substr(table_name, 1, 62) || E'\x07';
@@ -213,7 +208,6 @@ CREATE FUNCTION db_migrate_refresh(
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
 $$DECLARE
-   extschema               text;
    old_msglevel            text;
    v_plugin_schema         text;
    v_create_metadata_views regproc;
@@ -282,11 +276,7 @@ BEGIN
          OR schema =ANY (only_schemas);
 
    /* set "search_path" to the PostgreSQL stage, and extension schema */
-   SELECT extnamespace::regnamespace::text INTO extschema
-   FROM pg_extension
-   WHERE extname = 'db_migrator';
-
-   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, extschema);
+   EXECUTE format('SET LOCAL search_path = %I, @extschema@', pgstage_schema);
 
    /* refresh "schemas" table */
    EXECUTE format(E'INSERT INTO schemas (schema, orig_schema)\n'
@@ -1044,7 +1034,6 @@ CREATE FUNCTION db_migrate_mkforeign(
 ) RETURNS integer
    LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
 $$DECLARE
-   extschema               text;
    v_plugin_schema         text;
    v_translate_identifier  regproc;
    v_create_foreign_tab    regproc;
@@ -1103,10 +1092,7 @@ BEGIN
                   v_translate_identifier;
 
    /* set "search_path" to the PostgreSQL staging schema and the extension schema */
-   SELECT extnamespace::regnamespace::text INTO extschema
-      FROM pg_extension
-      WHERE extname = 'db_migrator';
-   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, extschema);
+   EXECUTE format('SET LOCAL search_path = %I, @extschema@', pgstage_schema);
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating schemas ...';
