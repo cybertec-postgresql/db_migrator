@@ -11,7 +11,11 @@
 - Factor out `db_migrate_indexes` from `db_migrate_constraints`.
   Patch by Florent Jardin.
 
-- Add a regression test suite based on pgTAP.
+- Add a regression test suite based on pgTAP.  
+  Patch by Florent Jardin.
+
+- Add low-level function `execute_statements()` used by others methods to
+  populate `log_migrate` table on failed statements.  
   Patch by Florent Jardin.
 
 - Add low-level function `execute_statements()` used by others methods to

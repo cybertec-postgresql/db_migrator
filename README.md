@@ -917,7 +917,7 @@ Parameters:
 This function iterates through an array of SQL statements and executes them
 inside a subtransaction. If one fails, it raises a detailed warning and inserts
 the failed statement and its context into `migrate_log` table and all previous
-successful statements in the subtransaction are rollbacked. 
+successful statements in the subtransaction are rollbacked.
 Returns `false` on failure.
 
 Plugin API
