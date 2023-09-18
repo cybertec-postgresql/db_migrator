@@ -1050,17 +1050,8 @@ $$DECLARE
    cachesiz                integer;
    lastval                 numeric;
    tab                     name;
-   colname                 name;
-   fcolname                text;
-   typ                     text;
-   pos                     integer;
-   nul                     boolean;
    fsch                    text;
    ftab                    text;
-   o_fsch                  text;
-   o_ftab                  text;
-   o_sch                   name;
-   o_tab                   name;
    col_array               name[] := ARRAY[]::name[];
    col_options_array       jsonb[] := ARRAY[]::jsonb[];
    fcol_array              text[] := ARRAY[]::text[];
@@ -1152,93 +1143,41 @@ BEGIN
    SET LOCAL client_min_messages = warning;
 
    /* create foreign tables */
-   o_sch := '';
-   o_tab := '';
-   FOR sch, tab, colname, fcolname, pos, typ, nul, coloptions, fsch, ftab IN
-      EXECUTE format(
-         E'SELECT schema,\n'
-          '       table_name,\n'
-          '       pc.column_name,\n'
-          '       pc.orig_column,\n'
-          '       pc.position,\n'
-          '       pc.type_name,\n'
-          '       pc.nullable,\n'
-          '       pc.options,\n'
-          '       ps.orig_schema,\n'
-          '       pt.orig_table\n'
-          'FROM columns pc\n'
-          '   JOIN tables pt\n'
-          '      USING (schema, table_name)\n'
-          '   JOIN schemas ps\n'
-          '      USING (schema)\n'
-          'WHERE pt.migrate\n'
-          'ORDER BY schema, table_name, pc.position',
-         staging_schema)
+   FOR sch, tab, fsch, ftab, col_array, fcol_array, type_array, null_array, col_options_array IN
+      SELECT schema, pt.table_name, ps.orig_schema, pt.orig_table,
+             array_agg(pc.column_name ORDER BY pc.position),
+             array_agg(pc.orig_column ORDER BY pc.position),
+             array_agg(pc.type_name ORDER BY pc.position),
+             array_agg(pc.nullable ORDER BY pc.position),
+             array_agg(pc.options ORDER BY pc.position)
+      FROM columns pc
+         JOIN tables pt
+            USING (schema, table_name)
+         JOIN schemas ps
+            USING (schema)
+      WHERE pt.migrate
+      GROUP BY schema, pt.table_name, ps.orig_schema, pt.orig_table
+      ORDER BY schema, pt.table_name
    LOOP
-      IF o_sch <> sch OR o_tab <> tab THEN
-         IF o_tab <> '' THEN
-            /* get the CREATE FOREIGN TABLE statement */
-            EXECUTE format(
-               'SELECT %s($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
-               v_create_foreign_tab
-            ) INTO stmt
-            USING server, o_sch, o_tab, o_fsch, o_ftab,
-                  col_array, col_options_array, fcol_array,
-                  type_array, null_array, options;
-
-            /* execute the statement and log errors */
-            IF NOT execute_statements(
-               operation => 'create foreign table',
-               schema => o_sch,
-               object_name => o_tab,
-               statements => ARRAY[stmt],
-               pgstage_schema => pgstage_schema
-            ) THEN
-               rc := rc + 1;
-            END IF;
-         END IF;
-
-         o_sch := sch;
-         o_tab := tab;
-         o_fsch := fsch;
-         o_ftab := ftab;
-         col_array := ARRAY[]::name[];
-         col_options_array := ARRAY[]::jsonb[];
-         fcol_array := ARRAY[]::text[];
-         type_array := ARRAY[]::text[];
-         null_array := ARRAY[]::boolean[];
-      END IF;
-
-      col_array := col_array || colname;
-      IF coloptions IS NOT NULL THEN
-         col_options_array := col_options_array || coloptions;
-      END IF;
-      fcol_array := fcol_array || fcolname;
-      type_array := type_array || typ;
-      null_array := null_array || nul;
-   END LOOP;
-
-   /* last foreign table */
-   IF o_tab <> '' THEN
       /* get the CREATE FOREIGN TABLE statement */
       EXECUTE format(
          'SELECT %s($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
          v_create_foreign_tab
       ) INTO stmt
-      USING server, o_sch, o_tab, o_fsch, o_ftab,
+      USING server, sch, tab, fsch, ftab,
             col_array, col_options_array, fcol_array,
             type_array, null_array, options;
-      /* execute the statement and log errors */
+
       IF NOT execute_statements(
          operation => 'create foreign table',
-         schema => o_sch,
-         object_name => o_tab,
+         schema => sch,
+         object_name => tab,
          statements => ARRAY[stmt],
          pgstage_schema => pgstage_schema
       ) THEN
          rc := rc + 1;
       END IF;
-   END IF;
+   END LOOP;
 
    /* reset client_min_messages */
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
@@ -1566,18 +1505,15 @@ $$DECLARE
    stmt_col_expr          text;
    stmt_wher_expr         text;
    separator              text;
-   old_s                  name;
-   old_t                  name;
-   old_i                  name;
-   loc_s                  name;
-   loc_t                  name;
-   ind_name               name;
+   sch                    name;
+   tabname                name;
+   indname                name;
    colpos                 integer;
-   expr                   text;
    wher                   text;
    uniq                   boolean;
-   des                    boolean;
-   is_expr                boolean;
+   expr_array             text[];
+   desc_array             boolean[];
+   is_expr_array          boolean[];
    rc                     integer := 0;
 BEGIN
    /* remember old setting */
@@ -1609,12 +1545,11 @@ BEGIN
    SET LOCAL client_min_messages = warning;
 
    /* loop through all index columns */
-   old_s := '';
-   old_t := '';
-   old_i := '';
-   FOR loc_s, loc_t, ind_name, uniq, wher, colpos, des, is_expr, expr IN
+   FOR sch, tabname, indname, uniq, wher, expr_array, desc_array, is_expr_array IN
       SELECT schema, table_name, i.index_name, ind.uniqueness, ind.where_clause,
-             i.position, i.descend, i.is_expression, i.column_name
+             array_agg(i.column_name ORDER BY i.position),
+             array_agg(i.descend ORDER BY i.position),
+             array_agg(i.is_expression ORDER BY i.position)
       FROM index_columns i
          JOIN indexes ind
             USING (schema, table_name, index_name)
@@ -1622,67 +1557,43 @@ BEGIN
             USING (schema, table_name)
       WHERE t.migrate
         AND ind.migrate
-      ORDER BY schema, table_name, i.index_name, i.position
+      GROUP BY schema, table_name, i.index_name, ind.uniqueness, ind.where_clause
+      ORDER BY schema, table_name, i.index_name
    LOOP
-      IF old_s <> loc_s OR old_t <> loc_t OR old_i <> ind_name THEN
-         IF old_t <> '' THEN
-            stmt := stmt || ')';
-            IF stmt_wher_expr <> '' THEN
-               stmt := stmt || ' WHERE ' || stmt_wher_expr;
-            END IF;
+      colpos := 1;
+      separator := '';
+      stmt := format('CREATE %sINDEX %I ON %I.%I (',
+                     CASE WHEN uniq THEN 'UNIQUE ' ELSE '' END, indname, sch, tabname);
 
-            IF NOT execute_statements(
-               operation => 'create index',
-               schema => old_s,
-               object_name => old_t,
-               statements => ARRAY[stmt],
-               pgstage_schema => pgstage_schema
-            ) THEN
-               rc := rc + 1;
-            END IF;
-         END IF;
+      FOREACH stmt_col_expr IN ARRAY expr_array LOOP
+         /* translate column expression */
+         EXECUTE format(
+                     'SELECT %s(%L)',
+                     v_translate_expression,
+                     stmt_col_expr
+               ) INTO stmt_col_expr;
 
-         stmt := format('CREATE %sINDEX %I ON %I.%I (',
-                        CASE WHEN uniq THEN 'UNIQUE ' ELSE '' END, ind_name, loc_s, loc_t);
-         old_s := loc_s;
-         old_t := loc_t;
-         old_i := ind_name;
-         separator := '';
-         stmt_wher_expr := '';
-
-         IF wher <> '' THEN
-            stmt_wher_expr := wher;
-         END IF;
-      END IF;
-
-      /* translate column expression */
-      EXECUTE format(
-                  'SELECT %s(%L)',
-                  v_translate_expression,
-                  expr
-              ) INTO stmt_col_expr;
-
-      stmt := stmt || separator || stmt_col_expr
-                   || CASE WHEN des THEN ' DESC' ELSE ' ASC' END;
-      separator := ', ';
-   END LOOP;
-
-   IF old_t <> '' THEN
+         stmt := stmt || separator || stmt_col_expr
+                      || CASE WHEN desc_array[colpos] THEN ' DESC' ELSE ' ASC' END;
+         separator := ', ';
+         colpos := colpos + 1;
+      END LOOP;
       stmt := stmt || ')';
-      IF stmt_wher_expr <> '' THEN
-         stmt := stmt || ' WHERE ' || stmt_wher_expr;
+
+      IF wher <> '' THEN
+         stmt := stmt || ' WHERE ' || wher;
       END IF;
 
       IF NOT execute_statements(
          operation => 'create index',
-         schema => old_s,
-         object_name => old_t,
+         schema => sch,
+         object_name => tabname,
          statements => ARRAY[stmt],
          pgstage_schema => pgstage_schema
       ) THEN
          rc := rc + 1;
       END IF;
-   END IF;
+   END LOOP;
 
    /* reset client_min_messages */
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
@@ -1704,23 +1615,20 @@ $$DECLARE
    v_translate_identifier regproc;
    v_translate_expression regproc;
    stmt                   text;
-   stmt_middle            text;
-   stmt_suffix            text;
    separator              text;
-   old_s                  name;
-   old_t                  name;
-   old_c                  name;
-   loc_s                  name;
-   loc_t                  name;
-   cons_name              name;
+   sch                    name;
+   tab                    name;
+   cons                   name;
    candefer               boolean;
    is_deferred            boolean;
    delrule                text;
    colname                name;
+   colnames               name[];
    colpos                 integer;
-   rem_s                  name;
-   rem_t                  name;
+   rem_sch                name;
+   rem_tab                name;
    rem_colname            name;
+   rem_colnames           name[];
    prim                   boolean;
    expr                   text;
    rc                     integer := 0;
@@ -1754,75 +1662,53 @@ BEGIN
    SET LOCAL client_min_messages = warning;
 
    /* loop through all key constraint columns */
-   old_s := '';
-   old_t := '';
-   old_c := '';
-   FOR loc_s, loc_t, cons_name, candefer, is_deferred, colname, colpos, prim IN
+   FOR sch, tab, cons, candefer, is_deferred, prim, colnames IN
       SELECT schema, table_name, k.constraint_name, k."deferrable", k.deferred,
-             k.column_name, k.position, k.is_primary
+             k.is_primary, array_agg(k.column_name ORDER BY k.position)
       FROM keys k
          JOIN tables t
             USING (schema, table_name)
       WHERE t.migrate
         AND k.migrate
-      ORDER BY schema, table_name, k.constraint_name, k.position
+      GROUP BY schema, table_name, k.constraint_name, k."deferrable", k.deferred, k.is_primary
+      ORDER BY schema, table_name, k.constraint_name
    LOOP
-      IF old_s <> loc_s OR old_t <> loc_t OR old_c <> cons_name THEN
-         IF old_t <> '' THEN
-            stmt := stmt || stmt_suffix;
+      stmt := format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s (', sch, tab, cons,
+                      CASE WHEN prim THEN 'PRIMARY KEY' ELSE 'UNIQUE' END);
 
-            IF NOT execute_statements(
-               operation => 'unique constraint',
-               schema => old_s,
-               object_name => old_t,
-               statements => ARRAY[stmt],
-               pgstage_schema => pgstage_schema
-            ) THEN
-               rc := rc + 1;
-            END IF;
-         END IF;
+      separator := '';
+      FOREACH colname IN ARRAY colnames
+      LOOP
+         stmt := stmt || separator || format('%I', colname);
+         separator := ', ';
+      END LOOP;
 
-         stmt := format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s (', loc_s, loc_t, cons_name,
-                        CASE WHEN prim THEN 'PRIMARY KEY' ELSE 'UNIQUE' END);
-         stmt_suffix := format(')%s DEFERRABLE INITIALLY %s',
-                              CASE WHEN candefer THEN '' ELSE ' NOT' END,
-                              CASE WHEN is_deferred THEN 'DEFERRED' ELSE 'IMMEDIATE' END);
-         old_s := loc_s;
-         old_t := loc_t;
-         old_c := cons_name;
-         separator := '';
-      END IF;
-
-      stmt := stmt || separator || format('%I', colname);
-      separator := ', ';
-   END LOOP;
-
-   IF old_t <> '' THEN
-      stmt := stmt || stmt_suffix;
+      stmt := stmt || format(')%s DEFERRABLE INITIALLY %s',
+                             CASE WHEN candefer THEN '' ELSE ' NOT' END,
+                             CASE WHEN is_deferred THEN 'DEFERRED' ELSE 'IMMEDIATE' END);
 
       IF NOT execute_statements(
          operation => 'unique constraint',
-         schema => old_s,
-         object_name => old_t,
+         schema => sch,
+         object_name => tab,
          statements => ARRAY[stmt],
          pgstage_schema => pgstage_schema
       ) THEN
          rc := rc + 1;
       END IF;
-   END IF;
+   END LOOP;
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating FOREIGN KEY constraints ...';
    SET LOCAL client_min_messages = warning;
 
    /* loop through all foreign key constraint columns */
-   old_s := '';
-   old_t := '';
-   old_c := '';
-   FOR loc_s, loc_t, cons_name, candefer, is_deferred, delrule,
-       colname, colpos, rem_s, rem_t, rem_colname IN
+   FOR sch, tab, cons, candefer, is_deferred, delrule,
+       rem_sch, rem_tab, colnames, rem_colnames IN
       SELECT fk.schema, fk.table_name, fk.constraint_name, fk."deferrable", fk.deferred, fk.delete_rule,
-             fk.column_name, fk.position, fk.remote_schema, fk.remote_table, fk.remote_column
+             fk.remote_schema, fk.remote_table,
+             array_agg(fk.column_name ORDER BY fk.position),
+             array_agg(fk.remote_column ORDER BY fk.position)
       FROM foreign_keys fk
          JOIN tables tl
             USING (schema, table_name)
@@ -1831,60 +1717,48 @@ BEGIN
       WHERE tl.migrate
         AND tf.migrate
         AND fk.migrate
-      ORDER BY fk.schema, fk.table_name, fk.constraint_name, fk.position
+      GROUP BY fk.schema, fk.table_name, fk.constraint_name, fk."deferrable",
+               fk.deferred, fk.delete_rule, fk.remote_schema, fk.remote_table
+      ORDER BY fk.schema, fk.table_name, fk.constraint_name
    LOOP
-      IF old_s <> loc_s OR old_t <> loc_t OR old_c <> cons_name THEN
-         IF old_t <> '' THEN
-            stmt := stmt || stmt_middle || stmt_suffix;
+      separator := '';
+      stmt := format('ALTER TABLE %I.%I ADD CONSTRAINT %I FOREIGN KEY (', sch, tab, cons);
+      FOREACH colname IN ARRAY colnames
+      LOOP
+         stmt := stmt || separator || format('%I', colname);
+         separator := ', ';
+      END LOOP;
 
-            IF NOT execute_statements(
-               operation => 'foreign key constraint',
-               schema => old_s,
-               object_name => old_t,
-               statements => ARRAY[stmt],
-               pgstage_schema => pgstage_schema
-            ) THEN
-               rc := rc + 1;
-            END IF;
-         END IF;
+      separator := '';
+      stmt := stmt || format(') REFERENCES %I.%I (', rem_sch, rem_tab);
+      FOREACH rem_colname IN ARRAY rem_colnames
+      LOOP
+         stmt := stmt || separator || format('%I', rem_colname);
+         separator := ', ';
+      END LOOP;
 
-         stmt := format('ALTER TABLE %I.%I ADD CONSTRAINT %I FOREIGN KEY (', loc_s, loc_t, cons_name);
-         stmt_middle := format(') REFERENCES %I.%I (', rem_s, rem_t);
-         stmt_suffix := format(') ON DELETE %s%s DEFERRABLE INITIALLY %s',
-                              delrule,
-                              CASE WHEN candefer THEN '' ELSE ' NOT' END,
-                              CASE WHEN is_deferred THEN 'DEFERRED' ELSE 'IMMEDIATE' END);
-         old_s := loc_s;
-         old_t := loc_t;
-         old_c := cons_name;
-         separator := '';
-      END IF;
-
-      stmt := stmt || separator || format('%I', colname);
-      stmt_middle := stmt_middle || separator || format('%I', rem_colname);
-      separator := ', ';
-   END LOOP;
-
-   IF old_t <> '' THEN
-      stmt := stmt || stmt_middle || stmt_suffix;
+      stmt := stmt || format(') ON DELETE %s%s DEFERRABLE INITIALLY %s',
+                             delrule,
+                             CASE WHEN candefer THEN '' ELSE ' NOT' END,
+                             CASE WHEN is_deferred THEN 'DEFERRED' ELSE 'IMMEDIATE' END);
 
       IF NOT execute_statements(
          operation => 'foreign key constraint',
-         schema => old_s,
-         object_name => old_t,
+         schema => sch,
+         object_name => tab,
          statements => ARRAY[stmt],
          pgstage_schema => pgstage_schema
       ) THEN
          rc := rc + 1;
       END IF;
-   END IF;
+   END LOOP;
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating CHECK constraints ...';
    SET LOCAL client_min_messages = warning;
 
    /* loop through all check constraints except NOT NULL checks */
-   FOR loc_s, loc_t, cons_name, candefer, is_deferred, expr IN
+   FOR sch, tab, cons, candefer, is_deferred, expr IN
       SELECT schema, table_name, c.constraint_name, c."deferrable", c.deferred, c.condition
       FROM checks c
          JOIN tables t
@@ -1892,12 +1766,12 @@ BEGIN
       WHERE t.migrate
         AND c.migrate
    LOOP
-      stmt := format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK (%s)', loc_s, loc_t, cons_name, expr);
+      stmt := format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK (%s)', sch, tab, cons, expr);
 
       IF NOT execute_statements(
          operation => 'check constraint',
-         schema => loc_s,
-         object_name => loc_t,
+         schema => sch,
+         object_name => tab,
          statements => ARRAY[stmt],
          pgstage_schema => pgstage_schema
       ) THEN
@@ -1910,7 +1784,7 @@ BEGIN
    SET LOCAL client_min_messages = warning;
 
    /* loop through all default expressions */
-   FOR loc_s, loc_t, colname, expr IN
+   FOR sch, tab, colname, expr IN
       SELECT schema, table_name, c.column_name, c.default_value
       FROM columns c
          JOIN tables t
@@ -1919,12 +1793,12 @@ BEGIN
         AND c.default_value IS NOT NULL
    LOOP
       stmt := format('ALTER TABLE %I.%I ALTER %I SET DEFAULT %s',
-                      loc_s, loc_t, colname, expr);
+                      sch, tab, colname, expr);
 
       IF NOT execute_statements(
          operation => 'column default',
-         schema => loc_s,
-         object_name => loc_t,
+         schema => sch,
+         object_name => tab,
          statements => ARRAY[stmt],
          pgstage_schema => pgstage_schema
       ) THEN
