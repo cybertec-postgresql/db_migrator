@@ -15,12 +15,13 @@
   Patch by Florent Jardin.
 
 - Add low-level function `execute_statements()` used by others methods to
-  populate `log_migrate` table on failed statements.  
+  populate the `log_migrate` table on failed statements.  
   Patch by Florent Jardin.
 
-- Add low-level function `execute_statements()` used by others methods to
-  populate `log_migrate` table on failed statements.  
-  Patch by Florent Jardin
+- Make the extension non-relocatable.  
+  This simplifies the code and should not be a problem: you can always drop and
+  re-create the extension if you want it in a different schema.  
+  Patch by Florent Jardin.
 
 ## Bugfixes: ##
 
