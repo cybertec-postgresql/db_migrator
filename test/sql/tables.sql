@@ -1,6 +1,35 @@
 \i test/psql.sql
 
-SELECT plan(9);
+SELECT plan(12);
+
+SELECT results_eq(
+    $$ SELECT statement FROM extschema.construct_schemas_statements() $$,
+    ARRAY[
+        'CREATE SCHEMA sch1',
+        'CREATE SCHEMA part1'
+    ],
+    'Statements for schema creation should be correct'
+);
+
+SELECT results_eq(
+    $$ SELECT statement FROM extschema.construct_sequences_statements() $$,
+    ARRAY[
+        'CREATE SEQUENCE sch1.seq1 INCREMENT 1 MINVALUE 1 MAXVALUE 100 START 2 CACHE 10 NO CYCLE'
+    ],
+    'Statements for sequence creation should be correct'
+);
+
+SELECT results_eq(
+    $$ SELECT regexp_replace(statement, '''.*''', '<removed>', 'g')
+       FROM extschema.construct_foreign_tables_statements(plugin => 'noop_migrator', server => 'noop') $$,
+    ARRAY[
+        'CREATE FOREIGN TABLE part1.pt1 ( c1 int NOT NULL) SERVER noop OPTIONS (filename <removed>)',
+        'CREATE FOREIGN TABLE part1.pt2 ( r1 int NOT NULL, h1 varchar(100) NOT NULL) SERVER noop OPTIONS (filename <removed>)',
+        'CREATE FOREIGN TABLE sch1.t1 ( c1 int) SERVER noop OPTIONS (filename <removed>)',
+        'CREATE FOREIGN TABLE sch1.t2 ( c1 int NOT NULL, t1_c1 int) SERVER noop OPTIONS (filename <removed>)'
+    ],
+    'Statements for foreign table creation should be correct'
+);
 
 SELECT is(
     extschema.db_migrate_mkforeign(plugin => 'noop_migrator', server => 'noop'),

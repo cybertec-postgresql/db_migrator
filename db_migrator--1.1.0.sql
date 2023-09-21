@@ -1032,31 +1032,12 @@ CREATE FUNCTION db_migrate_mkforeign(
    pgstage_schema name    DEFAULT NAME 'pgsql_stage',
    options        jsonb   DEFAULT NULL
 ) RETURNS integer
-   LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+   LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = @extschema@ AS
 $$DECLARE
-   v_plugin_schema         text;
-   v_translate_identifier  regproc;
-   v_create_foreign_tab    regproc;
    stmt                    text;
-   s                       name;
-   t                       name;
    sch                     name;
    seq                     name;
-   coloptions              jsonb;
-   minv                    numeric;
-   maxv                    numeric;
-   incr                    numeric;
-   cycl                    boolean;
-   cachesiz                integer;
-   lastval                 numeric;
    tab                     name;
-   fsch                    text;
-   ftab                    text;
-   col_array               name[] := ARRAY[]::name[];
-   col_options_array       jsonb[] := ARRAY[]::jsonb[];
-   fcol_array              text[] := ARRAY[]::text[];
-   type_array              text[] := ARRAY[]::text[];
-   null_array              boolean[] := ARRAY[]::boolean[];
    old_msglevel            text;
    rc                      integer := 0;
 BEGIN
@@ -1065,77 +1046,44 @@ BEGIN
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
 
-   /* get the plugin callback functions */
-   SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_extension
-   WHERE extname = plugin;
-
-   IF NOT FOUND THEN
-      RAISE EXCEPTION 'extension "%" is not installed', plugin;
-   END IF;
-
-   EXECUTE format(
-              E'SELECT create_foreign_table_fun,\n'
-              '       translate_identifier_fun\n'
-              'FROM %s.db_migrator_callback()',
-              v_plugin_schema
-           ) INTO v_create_foreign_tab,
-                  v_translate_identifier;
-
-   /* set "search_path" to the PostgreSQL staging schema and the extension schema */
-   EXECUTE format('SET LOCAL search_path = %I, @extschema@', pgstage_schema);
-
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating schemas ...';
    SET LOCAL client_min_messages = warning;
 
-   /* loop through the schemas that should be migrated */
-   FOR s IN
-      SELECT schema FROM schemas
+   /* create schema */
+   FOR sch, stmt IN
+      SELECT schema_name, statement
+         FROM construct_schemas_statements(pgstage_schema)
    LOOP
-      BEGIN
-         /* create schema */
-         stmt := format('CREATE SCHEMA %I', s);
-
-         IF NOT execute_statements(
-            operation => 'create schema',
-            schema => s,
-            object_name => '',
-            statements => ARRAY[stmt],
-            pgstage_schema => pgstage_schema
-         ) THEN
-            rc := rc + 1;
-         END IF;
-      END;
+      IF NOT execute_statements(
+         operation => 'create schema',
+         schema => sch,
+         object_name => '',
+         statements => ARRAY[stmt],
+         pgstage_schema => pgstage_schema
+      ) THEN
+         rc := rc + 1;
+      END IF;
    END LOOP;
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating sequences ...';
    SET LOCAL client_min_messages = warning;
 
-   /* loop through all sequences */
-   FOR sch, seq, minv, maxv, incr, cycl, cachesiz, lastval IN
-      SELECT schema, sequence_name, min_value, max_value, increment_by, cyclical, cache_size, last_value
-         FROM sequences
+   /* create sequences */
+   FOR sch, seq, stmt IN
+      SELECT schema_name, sequence_name, statement
+         FROM construct_sequences_statements(pgstage_schema)
    LOOP
-      BEGIN
-         stmt := format('CREATE SEQUENCE %I.%I INCREMENT %s %s %s START %s CACHE %s %sCYCLE',
-                     sch, seq, incr,
-                     CASE WHEN minv IS NULL THEN 'NO MINVALUE' ELSE 'MINVALUE ' || minv END,
-                     CASE WHEN maxv IS NULL THEN 'NO MAXVALUE' ELSE 'MAXVALUE ' || maxv END,
-                     lastval + 1, cachesiz,
-                     CASE WHEN cycl THEN '' ELSE 'NO ' END);
-
-         IF NOT execute_statements(
-            operation => 'create sequence',
-            schema => sch,
-            object_name => seq,
-            statements => ARRAY[stmt],
-            pgstage_schema => pgstage_schema
-         ) THEN
-            rc := rc + 1;
-         END IF;
-      END;
+      IF NOT execute_statements(
+         operation => 'create sequence',
+         schema => sch,
+         object_name => seq,
+         statements => ARRAY[stmt],
+         pgstage_schema => pgstage_schema
+      ) THEN
+         rc := rc + 1;
+      END IF;
    END LOOP;
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
@@ -1143,31 +1091,10 @@ BEGIN
    SET LOCAL client_min_messages = warning;
 
    /* create foreign tables */
-   FOR sch, tab, fsch, ftab, col_array, fcol_array, type_array, null_array, col_options_array IN
-      SELECT schema, pt.table_name, ps.orig_schema, pt.orig_table,
-             array_agg(pc.column_name ORDER BY pc.position),
-             array_agg(pc.orig_column ORDER BY pc.position),
-             array_agg(pc.type_name ORDER BY pc.position),
-             array_agg(pc.nullable ORDER BY pc.position),
-             array_agg(pc.options ORDER BY pc.position)
-      FROM columns pc
-         JOIN tables pt
-            USING (schema, table_name)
-         JOIN schemas ps
-            USING (schema)
-      WHERE pt.migrate
-      GROUP BY schema, pt.table_name, ps.orig_schema, pt.orig_table
-      ORDER BY schema, pt.table_name
+   FOR sch, tab, stmt IN
+      SELECT schema_name, table_name, statement
+         FROM construct_foreign_tables_statements(plugin, server, pgstage_schema, options)
    LOOP
-      /* get the CREATE FOREIGN TABLE statement */
-      EXECUTE format(
-         'SELECT %s($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
-         v_create_foreign_tab
-      ) INTO stmt
-      USING server, sch, tab, fsch, ftab,
-            col_array, col_options_array, fcol_array,
-            type_array, null_array, options;
-
       IF NOT execute_statements(
          operation => 'create foreign table',
          schema => sch,
@@ -1978,3 +1905,141 @@ BEGIN
 
    RETURN TRUE;
 END$$;
+
+CREATE FUNCTION construct_schemas_statements(
+   pgstage_schema name DEFAULT NAME 'pgsql_stage'
+) RETURNS TABLE (
+   schema_name name,
+   statement   text
+) LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+$$DECLARE
+BEGIN
+   EXECUTE format('SET LOCAL search_path = %I', pgstage_schema);
+
+   /* loop through the schemas that should be migrated */
+   FOR schema_name IN
+      SELECT schema FROM schemas
+   LOOP
+      statement := format('CREATE SCHEMA %I', schema_name);
+      RETURN next;
+   END LOOP;
+END;$$;
+
+COMMENT ON FUNCTION construct_schemas_statements(name) IS
+   'construct and return the CREATE SCHEMA statements from staging schema';
+
+CREATE FUNCTION construct_sequences_statements(
+   pgstage_schema name DEFAULT NAME 'pgsql_stage'
+) RETURNS TABLE (
+   schema_name   name,
+   sequence_name name,
+   statement     text
+) LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+$$DECLARE
+   sch        name;
+   seq        name;
+   minv       numeric;
+   maxv       numeric;
+   incr       numeric;
+   cycl       boolean;
+   cachesiz   integer;
+   lastval    numeric;
+BEGIN
+   EXECUTE format('SET LOCAL search_path = %I', pgstage_schema);
+
+   /* loop through all sequences */
+   FOR sch, seq, minv, maxv, incr, cycl, cachesiz, lastval IN
+      SELECT schema, s.sequence_name, min_value, max_value,
+             increment_by, cyclical, cache_size, last_value
+         FROM sequences s
+   LOOP
+      schema_name := sch;
+      sequence_name := seq;
+      statement := format(
+         'CREATE SEQUENCE %I.%I INCREMENT %s %s %s START %s CACHE %s %sCYCLE',
+            sch, seq, incr,
+            CASE WHEN minv IS NULL THEN 'NO MINVALUE' ELSE 'MINVALUE ' || minv END,
+            CASE WHEN maxv IS NULL THEN 'NO MAXVALUE' ELSE 'MAXVALUE ' || maxv END,
+            lastval + 1, cachesiz,
+            CASE WHEN cycl THEN '' ELSE 'NO ' END);
+      RETURN next;
+   END LOOP;
+END;$$;
+
+COMMENT ON FUNCTION construct_sequences_statements(name) IS
+   'construct and return the CREATE SEQUENCE statements from staging schema';
+
+CREATE FUNCTION construct_foreign_tables_statements(
+   plugin         name,
+   server         name,
+   pgstage_schema name DEFAULT NAME 'pgsql_stage',
+   options        jsonb   DEFAULT NULL
+) RETURNS TABLE (
+   schema_name name,
+   table_name  name,
+   statement   text
+) LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+$$DECLARE
+   v_plugin_schema         text;
+   v_create_foreign_tab    regproc;
+   sch                     name;
+   tab                     name;
+   fsch                    text;
+   ftab                    text;
+   col_array               name[];
+   col_options_array       jsonb[];
+   fcol_array              text[];
+   type_array              text[];
+   null_array              boolean[];
+BEGIN
+   /* get the plugin callback functions */
+   SELECT extnamespace::regnamespace::text INTO v_plugin_schema
+   FROM pg_extension
+   WHERE extname = plugin;
+
+   IF NOT FOUND THEN
+      RAISE EXCEPTION 'extension "%" is not installed', plugin;
+   END IF;
+
+   EXECUTE format(
+              E'SELECT create_foreign_table_fun\n'
+               'FROM %s.db_migrator_callback()',
+              v_plugin_schema
+           ) INTO v_create_foreign_tab;
+
+   EXECUTE format('SET LOCAL search_path = %I', pgstage_schema);
+
+   FOR sch, tab, fsch, ftab, col_array, fcol_array, type_array, null_array, col_options_array IN
+      SELECT schema, pt.table_name, ps.orig_schema, pt.orig_table,
+             array_agg(pc.column_name ORDER BY pc.position),
+             array_agg(pc.orig_column ORDER BY pc.position),
+             array_agg(pc.type_name ORDER BY pc.position),
+             array_agg(pc.nullable ORDER BY pc.position),
+             array_agg(pc.options ORDER BY pc.position)
+      FROM columns pc
+         JOIN tables pt
+            USING (schema, table_name)
+         JOIN schemas ps
+            USING (schema)
+      WHERE pt.migrate
+      GROUP BY schema, pt.table_name, ps.orig_schema, pt.orig_table
+      ORDER BY schema, pt.table_name
+   LOOP
+      schema_name := sch;
+      table_name := tab;
+
+      /* get the CREATE FOREIGN TABLE statement */
+      EXECUTE format(
+         'SELECT %s($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+         v_create_foreign_tab
+      ) INTO statement
+      USING server, sch, tab, fsch, ftab,
+            col_array, col_options_array, fcol_array,
+            type_array, null_array, options;
+
+      RETURN next;
+   END LOOP;
+END;$$;
+
+COMMENT ON FUNCTION construct_foreign_tables_statements(name,name,name,jsonb) IS
+   'construct and return the CREATE FOREIGN TABLE statements from staging schema';

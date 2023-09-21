@@ -897,7 +897,58 @@ will be created as a partitioned table.  Subpartitions are created if there are
 corresponding entries in `subpartitions`.
 The table data are migrated unless `with_data` is `FALSE`.
 
-## `execute_statements` ###
+### `construct_schemas_statements` ###
+
+Parameters:
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Will return a table composed by following columns:
+
+- `schema_name` (type `name`): name of the schema
+
+- `statement` (type `text`): related CREATE SCHEMA statement of the schema
+
+### `construct_sequences_statements` ###
+
+Parameters:
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Will return a table composed by following columns:
+
+- `schema_name` (type `name`): schema of the sequence
+
+- `sequence_name` (type `name`): name of the sequence
+
+- `statement` (type `text`): related CREATE SEQUENCE statement of the sequence
+
+### `construct_foreign_tables_statements` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `server` (type `name`, required): name of the foreign server that describes
+  the data source from which to migrate
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+- `options` (type `jsonb`, optional): options to pass to the plugin
+
+Will return a table composer by following columns:
+
+- `schema_name` (type `name`): schema of the table with the foreign table
+
+- `table_name` (type `name`): name of the foreign table
+
+- `statement` (type `text`): related CREATE FOREIGN TABLE statement of the
+  foreign table
+
+### `execute_statements` ###
 
 Parameters:
 

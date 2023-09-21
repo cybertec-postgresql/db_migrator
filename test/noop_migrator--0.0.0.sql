@@ -64,16 +64,15 @@ BEGIN
     stmt := format(E'CREATE FOREIGN TABLE %I.%I (', schema, table_name);
 
     FOR i IN 1..cardinality(column_names) LOOP
-        stmt := stmt || format(E'%s\n   %I %s%s',
-        sep, column_names[i], data_types[i],
-        CASE WHEN nullable[i] THEN '' ELSE ' NOT NULL' END
+        stmt := stmt || format(E'%s %I %s%s',
+            sep, column_names[i], data_types[i],
+            CASE WHEN nullable[i] THEN '' ELSE ' NOT NULL' END
         );
         sep := ',';
     END LOOP;
 
     RETURN stmt || format(
-        E') SERVER %I\n'
-        '   OPTIONS (filename %L)',
+        E') SERVER %I OPTIONS (filename %L)',
         server, testdata
     );
 END; $noop_mkforeign$;
