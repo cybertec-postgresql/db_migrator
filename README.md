@@ -948,6 +948,24 @@ Will return a table composer by following columns:
 - `statement` (type `text`): related CREATE FOREIGN TABLE statement of the
   foreign table
 
+### `construct_functions_statements` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Will return a table composed by following columns:
+
+- `schema_name` (type `name`): schema of the table with the function
+
+- `function_name` (type `name`): name of the function or procedure
+
+- `statement` (type `text`): related CREATE FUNCTION or CREATE PROCEDURE
+  statement of the function
+
 ### `execute_statements` ###
 
 Parameters:

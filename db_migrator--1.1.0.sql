@@ -1182,15 +1182,13 @@ CREATE FUNCTION db_migrate_functions(
    plugin         name,
    pgstage_schema name    DEFAULT NAME 'pgsql_stage'
 ) RETURNS integer
-   LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog SET check_function_bodies = off AS
+   LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT
+   SET search_path = @extschema@ SET check_function_bodies = off AS
 $$DECLARE
    old_msglevel           text;
-   v_plugin_schema        text;
-   v_translate_identifier regproc;
    sch                    name;
    fname                  name;
    stmt                   text;
-   src                    text;
    rc                     integer := 0;
 BEGIN
    /* remember old setting */
@@ -1198,33 +1196,10 @@ BEGIN
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
 
-   /* get the plugin callback functions */
-   SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_extension
-   WHERE extname = plugin;
-
-   IF NOT FOUND THEN
-      RAISE EXCEPTION 'extension "%" is not installed', plugin;
-   END IF;
-
-   EXECUTE format(
-              E'SELECT translate_identifier_fun\n'
-              'FROM %s.db_migrator_callback()',
-              v_plugin_schema
-           ) INTO v_translate_identifier;
-
-   /* set "search_path" to the remote stage and the extension schema */
-   EXECUTE format('SET LOCAL search_path = %I, %s, @extschema@', pgstage_schema, v_plugin_schema);
-
-   FOR sch, fname, src IN
-      SELECT schema, function_name, source
-      FROM functions
-      WHERE migrate
+   FOR sch, fname, stmt IN
+      SELECT schema_name, function_name, statement
+         FROM construct_functions_statements(plugin, pgstage_schema)
    LOOP
-      /* set "search_path" so that the function can be created without schema */
-      stmt := format('SET LOCAL search_path = %I', sch);
-      stmt := format('%s; CREATE %s', stmt, src);
-
       IF NOT execute_statements(
          operation => 'create function',
          schema => sch,
@@ -2043,3 +2018,41 @@ END;$$;
 
 COMMENT ON FUNCTION construct_foreign_tables_statements(name,name,name,jsonb) IS
    'construct and return the CREATE FOREIGN TABLE statements from staging schema';
+
+CREATE FUNCTION construct_functions_statements(
+   plugin         name,
+   pgstage_schema name DEFAULT NAME 'pgsql_stage'
+) RETURNS TABLE (
+   schema_name   name,
+   function_name name,
+   statement     text
+)LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+$$DECLARE
+   v_plugin_schema text;
+   src             text;
+BEGIN
+   /* get the plugin callback functions */
+   SELECT extnamespace::regnamespace::text INTO v_plugin_schema
+   FROM pg_extension
+   WHERE extname = plugin;
+
+   IF NOT FOUND THEN
+      RAISE EXCEPTION 'extension "%" is not installed', plugin;
+   END IF;
+
+   /* set "search_path" to the PostgreSQL staging schema */
+   EXECUTE format('SET LOCAL search_path = %I', pgstage_schema);
+
+   FOR schema_name, function_name, src IN
+      SELECT schema, f.function_name, source
+      FROM functions f
+      WHERE migrate
+   LOOP
+      /* set "search_path" so that the function can be created without schema */
+      statement := format('SET LOCAL search_path = %I; CREATE %s', schema_name, src);
+      RETURN next;
+   END LOOP;
+END; $$;
+
+COMMENT ON FUNCTION construct_functions_statements(name,name) IS
+   'construct and return the CREATE FUNCTION or CREATE PROCEDURE statements from staging schema';
