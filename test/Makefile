@@ -17,8 +17,6 @@ REGRESS_OPTS   = --schedule $(TEST_DIR)/schedules/setup.txt # always run setup s
 REGRESS_OPTS  += --inputdir=$(TEST_DIR) --outputdir=$(TEST_DIR)
 REGRESS_OPTS  += --load-extension=pgtap
 REGRESS_OPTS  += --load-extension=file_fdw
-REGRESS_OPTS  += --load-extension=$(EXTENSION)
-REGRESS_OPTS  += --load-extension=$(NOOP_EXTENSION)
 
 # Deploy the noop plugin in extension directory.
 # This step substitutes @testdata@ with the test/data directory as filename

@@ -1018,7 +1018,7 @@ BEGIN
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
 
    /* copy data from the remote stage to the PostgreSQL stage */
-   EXECUTE format('SET LOCAL search_path = %s', v_plugin_schema);
+   EXECUTE format('SET LOCAL search_path = %s, @extschema@', v_plugin_schema);
    RETURN db_migrate_refresh(plugin, staging_schema, pgstage_schema, only_schemas);
 END;$$;
 
@@ -1223,7 +1223,7 @@ BEGIN
            ) INTO v_translate_identifier;
 
    /* set "search_path" to the remote stage and the extension schema */
-   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
+   EXECUTE format('SET LOCAL search_path = %I, %s, @extschema@', pgstage_schema, v_plugin_schema);
 
    /* loop through all foreign tables to be migrated */
    FOR sch, tab IN
@@ -1287,7 +1287,7 @@ BEGIN
            ) INTO v_translate_identifier;
 
    /* set "search_path" to the remote stage and the extension schema */
-   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
+   EXECUTE format('SET LOCAL search_path = %I, %s, @extschema@', pgstage_schema, v_plugin_schema);
 
    FOR sch, fname, src IN
       SELECT schema, function_name, source
@@ -1359,7 +1359,7 @@ BEGIN
            ) INTO v_translate_identifier;
 
    /* set "search_path" to the remote stage and the extension schema */
-   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
+   EXECUTE format('SET LOCAL search_path = %I, %s, @extschema@', pgstage_schema, v_plugin_schema);
 
    FOR sch, tabname, trigname, trigtype, event, eachrow, whencl, src IN
       SELECT schema, table_name, trigger_name, trigger_type, triggering_event,
@@ -1443,7 +1443,7 @@ BEGIN
            ) INTO v_translate_identifier;
 
    /* set "search_path" to the remote stage and the extension schema */
-   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
+   EXECUTE format('SET LOCAL search_path = %I, %s, @extschema@', pgstage_schema, v_plugin_schema);
 
    FOR sch, vname, src IN
       SELECT schema, view_name, definition
@@ -1538,7 +1538,7 @@ BEGIN
            ) INTO v_translate_identifier, v_translate_expression;
 
    /* set "search_path" to the PostgreSQL staging schema and the extension schema */
-   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
+   EXECUTE format('SET LOCAL search_path = %I, %s, @extschema@', pgstage_schema, v_plugin_schema);
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating indexes ...';
@@ -1655,7 +1655,7 @@ BEGIN
            ) INTO v_translate_identifier, v_translate_expression;
 
    /* set "search_path" to the PostgreSQL staging schema and the extension schema */
-   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
+   EXECUTE format('SET LOCAL search_path = %I, %s, @extschema@', pgstage_schema, v_plugin_schema);
 
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating UNIQUE and PRIMARY KEY constraints ...';

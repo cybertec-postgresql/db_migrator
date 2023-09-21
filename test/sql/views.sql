@@ -3,7 +3,7 @@
 SELECT plan(2);
 
 SELECT is(
-    db_migrate_views(plugin => 'noop_migrator'),
+    extschema.db_migrate_views(plugin => 'noop_migrator'),
     0,
     'Should create views without errors'
 );

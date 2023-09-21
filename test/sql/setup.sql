@@ -1,11 +1,17 @@
 \i test/psql.sql
 
-SELECT plan(1);
+CREATE SCHEMA extschema;
+CREATE EXTENSION db_migrator WITH SCHEMA extschema;
+
+CREATE SCHEMA plugschema;
+CREATE EXTENSION noop_migrator WITH SCHEMA plugschema;
 
 CREATE SERVER noop FOREIGN DATA WRAPPER file_fdw;
 
+SELECT plan(1);
+
 SELECT is(
-    db_migrate_prepare(plugin => 'noop_migrator', server => 'noop'),
+    extschema.db_migrate_prepare(plugin => 'noop_migrator', server => 'noop'),
     0,
     'Should prepare staging schemas and catalog without errors'
 );

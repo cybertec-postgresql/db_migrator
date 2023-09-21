@@ -3,7 +3,7 @@
 SELECT plan(3);
 
 SELECT is(
-    db_migrate_indexes(plugin => 'noop_migrator'),
+    extschema.db_migrate_indexes(plugin => 'noop_migrator'),
     0,
     'Should create user-defined indexes without errors'
 );

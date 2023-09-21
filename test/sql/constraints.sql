@@ -3,7 +3,7 @@
 SELECT plan(7);
 
 SELECT is(
-    db_migrate_constraints(plugin => 'noop_migrator'),
+    extschema.db_migrate_constraints(plugin => 'noop_migrator'),
     0,
     'Should create constraints without errors'
 );

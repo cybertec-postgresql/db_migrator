@@ -3,7 +3,7 @@
 SELECT plan(9);
 
 SELECT is(
-    db_migrate_mkforeign(plugin => 'noop_migrator', server => 'noop'),
+    extschema.db_migrate_mkforeign(plugin => 'noop_migrator', server => 'noop'),
     0,
     'Should create foreign tables without errors'
 );
@@ -19,7 +19,7 @@ SELECT sequences_are(
 );
 
 SELECT is(
-    db_migrate_tables(plugin => 'noop_migrator', with_data => true),
+    extschema.db_migrate_tables(plugin => 'noop_migrator', with_data => true),
     0,
     'Should migrate tables without errors'
 );
