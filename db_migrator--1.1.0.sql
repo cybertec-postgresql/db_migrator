@@ -1224,73 +1224,29 @@ CREATE FUNCTION db_migrate_triggers(
    plugin         name,
    pgstage_schema name    DEFAULT NAME 'pgsql_stage'
 ) RETURNS integer
-   LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog SET check_function_bodies = off AS
+   LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT
+   SET search_path = @extschema@ SET check_function_bodies = off AS
 $$DECLARE
-   old_msglevel           text;
-   v_plugin_schema        text;
-   v_translate_identifier regproc;
-   sch                    name;
-   tabname                name;
-   trigname               name;
-   trigtype               text;
-   event                  text;
-   eachrow                boolean;
-   whencl                 text;
-   statements             text[];
-   src                    text;
-   rc                     integer := 0;
+   old_msglevel text;
+   sch          name;
+   trigname     name;
+   stmts        text[];
+   rc           integer := 0;
 BEGIN
    /* remember old setting */
    old_msglevel := current_setting('client_min_messages');
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
 
-   /* get the plugin callback functions */
-   SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_extension
-   WHERE extname = plugin;
-
-   IF NOT FOUND THEN
-      RAISE EXCEPTION 'extension "%" is not installed', plugin;
-   END IF;
-
-   EXECUTE format(
-              E'SELECT translate_identifier_fun\n'
-              'FROM %s.db_migrator_callback()',
-              v_plugin_schema
-           ) INTO v_translate_identifier;
-
-   /* set "search_path" to the remote stage and the extension schema */
-   EXECUTE format('SET LOCAL search_path = %I, %s, @extschema@', pgstage_schema, v_plugin_schema);
-
-   FOR sch, tabname, trigname, trigtype, event, eachrow, whencl, src IN
-      SELECT schema, table_name, trigger_name, trigger_type, triggering_event,
-             for_each_row, when_clause, trigger_body
-      FROM triggers
-      WHERE migrate
+   FOR sch, trigname, stmts  IN
+      SELECT schema_name, trigger_name, statements
+         FROM construct_triggers_statements(plugin, pgstage_schema)
    LOOP
-      /* create the trigger function */
-      statements := statements ||
-         format(E'CREATE FUNCTION %I.%I() RETURNS trigger\n'
-                '   LANGUAGE plpgsql SET search_path = %L AS\n$_f_$%s$_f_$',
-                sch, trigname, sch, src);
-
-      /* create the trigger itself */
-      statements := statements ||
-         format(E'CREATE TRIGGER %I %s %s ON %I.%I FOR EACH %s\n'
-                 '   EXECUTE PROCEDURE %I.%I()',
-                 trigname,
-                 trigtype,
-                 event,
-                 sch, tabname,
-                 CASE WHEN eachrow THEN 'ROW' ELSE 'STATEMENT' END,
-                 sch, trigname);
-
       IF NOT execute_statements(
          operation => 'create trigger',
          schema => sch,
          object_name => trigname,
-         statements => statements,
+         statements => stmts,
          pgstage_schema => pgstage_schema
       ) THEN
          rc := rc + 1;
@@ -2056,3 +2012,69 @@ END; $$;
 
 COMMENT ON FUNCTION construct_functions_statements(name,name) IS
    'construct and return the CREATE FUNCTION or CREATE PROCEDURE statements from staging schema';
+
+CREATE FUNCTION construct_triggers_statements(
+   plugin         name,
+   pgstage_schema name DEFAULT NAME 'pgsql_stage'
+) RETURNS TABLE (
+   schema_name  name,
+   trigger_name name,
+   statements   text[]
+)LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+$$DECLARE
+   v_plugin_schema        text;
+   v_translate_identifier regproc;
+   src                    text;
+   tabname                name;
+   trigtype               text;
+   event                  text;
+   eachrow                boolean;
+   whencl                 text;
+BEGIN
+   /* get the plugin callback functions */
+   SELECT extnamespace::regnamespace::text INTO v_plugin_schema
+   FROM pg_extension
+   WHERE extname = plugin;
+
+   IF NOT FOUND THEN
+      RAISE EXCEPTION 'extension "%" is not installed', plugin;
+   END IF;
+
+   EXECUTE format(
+              E'SELECT translate_identifier_fun\n'
+              'FROM %s.db_migrator_callback()',
+              v_plugin_schema
+           ) INTO v_translate_identifier;
+
+   /* set "search_path" to the remote stage and the extension schema */
+   EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
+
+   FOR schema_name, tabname, trigger_name, trigtype, event, eachrow, whencl, src IN
+      SELECT schema, table_name, t.trigger_name, trigger_type, triggering_event,
+             for_each_row, when_clause, trigger_body
+      FROM triggers t
+      WHERE migrate
+   LOOP
+      /* create the trigger function */
+      statements := statements ||
+         format(E'CREATE FUNCTION %I.%I() RETURNS trigger\n'
+                  '   LANGUAGE plpgsql SET search_path = %L AS\n$_f_$%s$_f_$',
+                  schema_name, trigger_name, schema_name, src);
+
+      /* create the trigger itself */
+      statements := statements ||
+         format(E'CREATE TRIGGER %I %s %s ON %I.%I FOR EACH %s\n'
+                  '   EXECUTE PROCEDURE %I.%I()',
+                  trigger_name,
+                  trigtype,
+                  event,
+                  schema_name, tabname,
+                  CASE WHEN eachrow THEN 'ROW' ELSE 'STATEMENT' END,
+                  schema_name, trigger_name);
+
+      RETURN next;
+   END LOOP;
+END;$$;
+
+COMMENT ON FUNCTION construct_triggers_statements(name,name) IS
+   'construct and return the CREATE FUNCTION and CREATE TRIGGER statements from staging schema';
