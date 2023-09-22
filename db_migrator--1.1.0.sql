@@ -1353,25 +1353,12 @@ CREATE FUNCTION db_migrate_indexes(
    plugin         name,
    pgstage_schema name    DEFAULT NAME 'pgsql_stage'
 ) RETURNS integer
-   LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+   LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = @extschema@ AS
 $$DECLARE
    old_msglevel           text;
-   v_plugin_schema        text;
-   v_translate_identifier regproc;
-   v_translate_expression regproc;
-   stmt                   text;
-   stmt_col_expr          text;
-   stmt_wher_expr         text;
-   separator              text;
    sch                    name;
    tabname                name;
-   indname                name;
-   colpos                 integer;
-   wher                   text;
-   uniq                   boolean;
-   expr_array             text[];
-   desc_array             boolean[];
-   is_expr_array          boolean[];
+   stmt                   text;
    rc                     integer := 0;
 BEGIN
    /* remember old setting */
@@ -1379,69 +1366,14 @@ BEGIN
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
 
-   /* get the plugin callback functions */
-   SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_extension
-   WHERE extname = plugin;
-
-   IF NOT FOUND THEN
-      RAISE EXCEPTION 'extension "%" is not installed', plugin;
-   END IF;
-
-   EXECUTE format(
-              E'SELECT translate_identifier_fun,\n'
-              '        translate_expression_fun\n'
-              'FROM %s.db_migrator_callback()',
-              v_plugin_schema
-           ) INTO v_translate_identifier, v_translate_expression;
-
-   /* set "search_path" to the PostgreSQL staging schema and the extension schema */
-   EXECUTE format('SET LOCAL search_path = %I, %s, @extschema@', pgstage_schema, v_plugin_schema);
-
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating indexes ...';
    SET LOCAL client_min_messages = warning;
 
-   /* loop through all index columns */
-   FOR sch, tabname, indname, uniq, wher, expr_array, desc_array, is_expr_array IN
-      SELECT schema, table_name, i.index_name, ind.uniqueness, ind.where_clause,
-             array_agg(i.column_name ORDER BY i.position),
-             array_agg(i.descend ORDER BY i.position),
-             array_agg(i.is_expression ORDER BY i.position)
-      FROM index_columns i
-         JOIN indexes ind
-            USING (schema, table_name, index_name)
-         JOIN tables t
-            USING (schema, table_name)
-      WHERE t.migrate
-        AND ind.migrate
-      GROUP BY schema, table_name, i.index_name, ind.uniqueness, ind.where_clause
-      ORDER BY schema, table_name, i.index_name
+   FOR sch, tabname, stmt IN
+      SELECT schema_name, table_name, statement
+         FROM construct_indexes_statements(plugin, pgstage_schema)
    LOOP
-      colpos := 1;
-      separator := '';
-      stmt := format('CREATE %sINDEX %I ON %I.%I (',
-                     CASE WHEN uniq THEN 'UNIQUE ' ELSE '' END, indname, sch, tabname);
-
-      FOREACH stmt_col_expr IN ARRAY expr_array LOOP
-         /* translate column expression */
-         EXECUTE format(
-                     'SELECT %s(%L)',
-                     v_translate_expression,
-                     stmt_col_expr
-               ) INTO stmt_col_expr;
-
-         stmt := stmt || separator || stmt_col_expr
-                      || CASE WHEN desc_array[colpos] THEN ' DESC' ELSE ' ASC' END;
-         separator := ', ';
-         colpos := colpos + 1;
-      END LOOP;
-      stmt := stmt || ')';
-
-      IF wher <> '' THEN
-         stmt := stmt || ' WHERE ' || wher;
-      END IF;
-
       IF NOT execute_statements(
          operation => 'create index',
          schema => sch,
@@ -2078,3 +2010,92 @@ END;$$;
 
 COMMENT ON FUNCTION construct_triggers_statements(name,name) IS
    'construct and return the CREATE FUNCTION and CREATE TRIGGER statements from staging schema';
+
+CREATE FUNCTION construct_indexes_statements(
+   plugin         name,
+   pgstage_schema name DEFAULT NAME 'pgsql_stage'
+) RETURNS TABLE (
+   schema_name name,
+   table_name name,
+   statement   text
+) LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+$$DECLARE
+   v_plugin_schema        text;
+   v_translate_identifier regproc;
+   v_translate_expression regproc;
+   stmt_col_expr          text;
+   stmt_wher_expr         text;
+   separator              text;
+   indname                name;
+   colpos                 integer;
+   wher                   text;
+   uniq                   boolean;
+   expr_array             text[];
+   desc_array             boolean[];
+   is_expr_array          boolean[];
+BEGIN
+   /* get the plugin callback functions */
+   SELECT extnamespace::regnamespace::text INTO v_plugin_schema
+   FROM pg_extension
+   WHERE extname = plugin;
+
+   IF NOT FOUND THEN
+      RAISE EXCEPTION 'extension "%" is not installed', plugin;
+   END IF;
+
+   EXECUTE format(
+              E'SELECT translate_identifier_fun,\n'
+              '        translate_expression_fun\n'
+              'FROM %s.db_migrator_callback()',
+              v_plugin_schema
+           ) INTO v_translate_identifier, v_translate_expression;
+
+   /* set "search_path" to the PostgreSQL staging schema and the extension schema */
+   EXECUTE format('SET LOCAL search_path = %I, %s, @extschema@', pgstage_schema, v_plugin_schema);
+
+   /* loop through all index columns */
+   FOR schema_name, table_name, indname, uniq, wher, expr_array, desc_array, is_expr_array IN
+      SELECT schema, ind.table_name, i.index_name, ind.uniqueness, ind.where_clause,
+             array_agg(i.column_name ORDER BY i.position),
+             array_agg(i.descend ORDER BY i.position),
+             array_agg(i.is_expression ORDER BY i.position)
+      FROM index_columns i
+         JOIN indexes ind
+            USING (schema, table_name, index_name)
+         JOIN tables t
+            USING (schema, table_name)
+      WHERE t.migrate
+        AND ind.migrate
+      GROUP BY schema, ind.table_name, i.index_name, ind.uniqueness, ind.where_clause
+      ORDER BY schema, ind.table_name, i.index_name
+   LOOP
+      colpos := 1;
+      separator := '';
+      statement := format('CREATE %sINDEX %I ON %I.%I (',
+                     CASE WHEN uniq THEN 'UNIQUE ' ELSE '' END, indname, schema_name, table_name);
+
+      FOREACH stmt_col_expr IN ARRAY expr_array LOOP
+         /* translate column expression */
+         EXECUTE format(
+                     'SELECT %s(%L)',
+                     v_translate_expression,
+                     stmt_col_expr
+               ) INTO stmt_col_expr;
+
+         statement := statement || separator || stmt_col_expr
+                      || CASE WHEN desc_array[colpos] THEN ' DESC' ELSE ' ASC' END;
+         separator := ', ';
+         colpos := colpos + 1;
+      END LOOP;
+      statement := statement || ')';
+
+      IF wher <> '' THEN
+         statement := statement || ' WHERE ' || wher;
+      END IF;
+
+      RETURN next;
+   END LOOP;
+END;$$;
+
+COMMENT ON FUNCTION construct_indexes_statements(name,name) IS
+   'construct and return the CREATE INDEX statements from staging schema';

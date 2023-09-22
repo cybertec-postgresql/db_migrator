@@ -984,6 +984,23 @@ Will return a table composed by following columns:
 - `statements` (type `text[]`): related CREATE FUNCTION and CREATE TRIGGER
   statements of the trigger
 
+### `construct_indexes_statements` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Will return a table composed by following columns:
+
+- `schema_name` (type `name`): schema of the table with the index
+
+- `index_name` (type `name`): name of the index
+
+- `statement` (type `text`): related CREATE INDEX statement of the index
+
 ### `execute_statements` ###
 
 Parameters:
