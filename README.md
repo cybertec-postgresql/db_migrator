@@ -966,6 +966,24 @@ Will return a table composed by following columns:
 - `statement` (type `text`): related CREATE FUNCTION or CREATE PROCEDURE
   statement of the function
 
+### `construct_views_statements` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Will return a table composed by following columns:
+
+- `schema_name` (type `name`): schema of the table with the function
+
+- `view_name` (type `name`): name of the view
+
+- `statements` (type `text[]`): related SET LOCAL search_path and CREATE VIEW
+  statements of the view
+
 ### `construct_triggers_statements` ###
 
 Parameters:

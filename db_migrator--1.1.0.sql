@@ -1266,18 +1266,15 @@ CREATE FUNCTION db_migrate_views(
    plugin         name,
    pgstage_schema name    DEFAULT NAME 'pgsql_stage'
 ) RETURNS integer
-   LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+   LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = @extschema@ AS
 $$DECLARE
    old_msglevel           text;
    v_plugin_schema        text;
    v_translate_identifier regproc;
    sch                    name;
    vname                  name;
-   col                    name;
-   src                    text;
    stmt                   text;
-   statements             text[];
-   separator              text;
+   stmts                  text[];
    rc                     integer := 0;
 BEGIN
    /* remember old setting */
@@ -1285,59 +1282,19 @@ BEGIN
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
 
-   /* get the plugin callback functions */
-   SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_extension
-   WHERE extname = plugin;
-
-   IF NOT FOUND THEN
-      RAISE EXCEPTION 'extension "%" is not installed', plugin;
-   END IF;
-
-   EXECUTE format(
-              E'SELECT translate_identifier_fun\n'
-              'FROM %s.db_migrator_callback()',
-              v_plugin_schema
-           ) INTO v_translate_identifier;
-
-   /* set "search_path" to the remote stage and the extension schema */
-   EXECUTE format('SET LOCAL search_path = %I, %s, @extschema@', pgstage_schema, v_plugin_schema);
-
-   FOR sch, vname, src IN
-      SELECT schema, view_name, definition
-      FROM views
-      WHERE migrate
+   FOR sch, vname, stmts IN
+      SELECT schema_name, view_name, statements
+         FROM construct_views_statements(plugin, pgstage_schema)
    LOOP
-      /* set "search_path" so that the function body can reference objects without schema */
-      statements := statements ||
-         format('SET LOCAL search_path = %I', sch);
-
-      stmt := format(E'CREATE VIEW %I.%I (', sch, vname);
-      separator := E'\n   ';
-      FOR col IN
-         SELECT column_name
-            FROM columns
-            WHERE schema = sch
-              AND table_name = vname
-            ORDER BY position
-      LOOP
-         stmt := stmt || separator || quote_ident(col);
-         separator := E',\n   ';
-      END LOOP;
-      stmt := stmt || E'\n) AS ' || src;
-      statements := statements || stmt;
-
       IF NOT execute_statements(
          operation => 'create view',
          schema => sch,
          object_name => vname,
-         statements => statements,
+         statements => stmts,
          pgstage_schema => pgstage_schema
       ) THEN
          rc := rc + 1;
       END IF;
-
-      EXECUTE format('SET LOCAL search_path = %I, %s', pgstage_schema, v_plugin_schema);
    END LOOP;
 
    /* reset client_min_messages */
@@ -1835,6 +1792,54 @@ END; $$;
 
 COMMENT ON FUNCTION construct_functions_statements(name,name) IS
    'construct and return the CREATE FUNCTION or CREATE PROCEDURE statements from staging schema';
+
+CREATE FUNCTION construct_views_statements(
+   plugin         name,
+   pgstage_schema name DEFAULT NAME 'pgsql_stage'
+) RETURNS TABLE (
+   schema_name name,
+   view_name   name,
+   statements  text[]
+)LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+$$DECLARE
+   src       text;
+   stmt      text;
+   separator text;
+   col       name;
+BEGIN
+   /* set "search_path" to the PostgreSQL staging schema */
+   EXECUTE format('SET LOCAL search_path = %I', pgstage_schema);
+
+   FOR schema_name, view_name, src IN
+      SELECT schema, v.view_name, definition
+      FROM views v
+      WHERE migrate
+   LOOP
+      /* set "search_path" so that the function body can reference objects without schema */
+      statements := statements ||
+         format('SET LOCAL search_path = %I', schema_name);
+
+      stmt := format(E'CREATE VIEW %I.%I (', schema_name, view_name);
+      separator := E'\n   ';
+      FOR col IN
+         SELECT column_name
+            FROM columns
+            WHERE schema = schema_name
+              AND table_name = view_name
+            ORDER BY position
+      LOOP
+         stmt := stmt || separator || quote_ident(col);
+         separator := E',\n   ';
+      END LOOP;
+      stmt := stmt || E'\n) AS ' || src;
+      statements := statements || stmt;
+
+      RETURN next;
+   END LOOP;
+END;$$;
+
+COMMENT ON FUNCTION construct_views_statements(name,name) IS
+   'construct and return the CREATE VIEW statements from staging schema';
 
 CREATE FUNCTION construct_triggers_statements(
    plugin         name,
