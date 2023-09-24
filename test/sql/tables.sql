@@ -1,6 +1,6 @@
 \i test/psql.sql
 
-SELECT plan(12);
+SELECT plan(13);
 
 SELECT results_eq(
     $$ SELECT statement FROM extschema.construct_schemas_statements() $$,
@@ -29,6 +29,14 @@ SELECT results_eq(
         'CREATE FOREIGN TABLE sch1.t2 ( c1 int NOT NULL, t1_c1 int) SERVER noop OPTIONS (filename <removed>)'
     ],
     'Statements for foreign table creation should be correct'
+);
+
+SELECT results_eq(
+    $$ SELECT statement FROM extschema.construct_defaults_statements(plugin => 'noop_migrator') $$,
+    ARRAY[
+        'ALTER TABLE sch1.t2 ALTER c1 SET DEFAULT 1'
+    ],
+    'Statements for table column defaulting should be correct'
 );
 
 SELECT is(

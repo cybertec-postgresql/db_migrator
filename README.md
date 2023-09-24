@@ -536,7 +536,7 @@ without subpartitions to a PostgreSQL table with subpartitions.
 
   This may be useful to store if the trigger has been translated successfully.
 
-### `table_privs` (permissions on tables) ##ä
+### `table_privs` (permissions on tables) ###
 
 These are not migrated by `db_migrator`, but can be used by the migration
 script to migrate permissions.
@@ -939,7 +939,7 @@ Parameters:
 
 - `options` (type `jsonb`, optional): options to pass to the plugin
 
-Will return a table composer by following columns:
+Will return a table composed by following columns:
 
 - `schema_name` (type `name`): schema of the table with the foreign table
 
@@ -1000,6 +1000,75 @@ Will return a table composed by following columns:
 - `index_name` (type `name`): name of the index
 
 - `statement` (type `text`): related CREATE INDEX statement of the index
+
+### `construct_key_constraints_statements` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Will return a table composed by following columns:
+
+- `schema_name` (type `name`): schema of the table
+
+- `table_name` (type `name`): name of the table that has the key constraint
+
+- `statement` (type `text`): related ADD CONSTRAINT statement of the table
+
+### `construct_fkey_constraints_statements` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Will return a table composed by following columns:
+
+- `schema_name` (type `name`): schema of the table
+
+- `table_name` (type `name`): name of the table that has the foreign key
+  constraint
+
+- `statement` (type `text`): related ADD CONSTRAINT statement of the table
+
+### `construct_check_constraints_statements` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Will return a table composed by following columns:
+
+- `schema_name` (type `name`): schema of the table
+
+- `table_name` (type `name`): name of the table that has the check constraint
+
+- `statement` (type `text`): related ADD CONSTRAINT statement of the table
+
+### `construct_defaults_statements` ###
+
+Parameters:
+
+- `plugin` (type `name`, required): name of the `db_migrator` plugin to use
+
+- `pgstage_schema` (type `name`, default `pgsql_stage`): name of the
+  Postgres staging schema
+
+Will return a table composed by following columns:
+
+- `schema_name` (type `name`): schema of the table
+
+- `table_name` (type `name`): name of the table whose column has a default value
+
+- `statement` (type `text`): related ALTER SET DEFAULT statement of the table
 
 ### `execute_statements` ###
 

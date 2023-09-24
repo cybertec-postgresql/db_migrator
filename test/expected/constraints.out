@@ -1,10 +1,13 @@
 \i test/psql.sql
 \unset ECHO
-1..7
-ok 1 - Should create constraints without errors
-ok 2 - Table t1 should have a primary key
-ok 3 - Table t2 should not have a primary key
-ok 4 - Column t2(c1) should have a unique constraint
-ok 5 - Column t2(t1_c1) should have a foreign key constraint
-ok 6 - Column t2(c1) should have a check constraint
-ok 7 - Column t2(c1) should have a default value
+1..10
+ok 1 - Statements for key constraint creation should be correct
+ok 2 - Statements for foreign constraint creation should be correct
+ok 3 - Statements for check constraint creation should be correct
+ok 4 - Should create constraints without errors
+ok 5 - Table t1 should have a primary key
+ok 6 - Table t2 should not have a primary key
+ok 7 - Column t2(c1) should have a unique constraint
+ok 8 - Column t2(t1_c1) should have a foreign key constraint
+ok 9 - Column t2(c1) should have a check constraint
+ok 10 - Column t2(c1) should have a default value

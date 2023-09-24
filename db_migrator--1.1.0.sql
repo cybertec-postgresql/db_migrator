@@ -1398,85 +1398,27 @@ CREATE FUNCTION db_migrate_constraints(
    plugin         name,
    pgstage_schema name    DEFAULT NAME 'pgsql_stage'
 ) RETURNS integer
-   LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+   LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = @extschema@ AS
 $$DECLARE
-   old_msglevel           text;
-   v_plugin_schema        text;
-   v_translate_identifier regproc;
-   v_translate_expression regproc;
-   stmt                   text;
-   separator              text;
-   sch                    name;
-   tab                    name;
-   cons                   name;
-   candefer               boolean;
-   is_deferred            boolean;
-   delrule                text;
-   colname                name;
-   colnames               name[];
-   colpos                 integer;
-   rem_sch                name;
-   rem_tab                name;
-   rem_colname            name;
-   rem_colnames           name[];
-   prim                   boolean;
-   expr                   text;
-   rc                     integer := 0;
+   old_msglevel text;
+   stmt         text;
+   sch          name;
+   tab          name;
+   rc           integer := 0;
 BEGIN
    /* remember old setting */
    old_msglevel := current_setting('client_min_messages');
    /* make the output less verbose */
    SET LOCAL client_min_messages = warning;
 
-   /* get the plugin callback functions */
-   SELECT extnamespace::regnamespace::text INTO v_plugin_schema
-   FROM pg_extension
-   WHERE extname = plugin;
-
-   IF NOT FOUND THEN
-      RAISE EXCEPTION 'extension "%" is not installed', plugin;
-   END IF;
-
-   EXECUTE format(
-              E'SELECT translate_identifier_fun,\n'
-              '        translate_expression_fun\n'
-              'FROM %s.db_migrator_callback()',
-              v_plugin_schema
-           ) INTO v_translate_identifier, v_translate_expression;
-
-   /* set "search_path" to the PostgreSQL staging schema and the extension schema */
-   EXECUTE format('SET LOCAL search_path = %I, %s, @extschema@', pgstage_schema, v_plugin_schema);
-
    EXECUTE 'SET LOCAL client_min_messages = ' || old_msglevel;
    RAISE NOTICE 'Creating UNIQUE and PRIMARY KEY constraints ...';
    SET LOCAL client_min_messages = warning;
 
-   /* loop through all key constraint columns */
-   FOR sch, tab, cons, candefer, is_deferred, prim, colnames IN
-      SELECT schema, table_name, k.constraint_name, k."deferrable", k.deferred,
-             k.is_primary, array_agg(k.column_name ORDER BY k.position)
-      FROM keys k
-         JOIN tables t
-            USING (schema, table_name)
-      WHERE t.migrate
-        AND k.migrate
-      GROUP BY schema, table_name, k.constraint_name, k."deferrable", k.deferred, k.is_primary
-      ORDER BY schema, table_name, k.constraint_name
+   FOR sch, tab, stmt IN
+      SELECT schema_name, table_name, statement
+         FROM construct_key_constraints_statements(plugin, pgstage_schema)
    LOOP
-      stmt := format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s (', sch, tab, cons,
-                      CASE WHEN prim THEN 'PRIMARY KEY' ELSE 'UNIQUE' END);
-
-      separator := '';
-      FOREACH colname IN ARRAY colnames
-      LOOP
-         stmt := stmt || separator || format('%I', colname);
-         separator := ', ';
-      END LOOP;
-
-      stmt := stmt || format(')%s DEFERRABLE INITIALLY %s',
-                             CASE WHEN candefer THEN '' ELSE ' NOT' END,
-                             CASE WHEN is_deferred THEN 'DEFERRED' ELSE 'IMMEDIATE' END);
-
       IF NOT execute_statements(
          operation => 'unique constraint',
          schema => sch,
@@ -1492,46 +1434,10 @@ BEGIN
    RAISE NOTICE 'Creating FOREIGN KEY constraints ...';
    SET LOCAL client_min_messages = warning;
 
-   /* loop through all foreign key constraint columns */
-   FOR sch, tab, cons, candefer, is_deferred, delrule,
-       rem_sch, rem_tab, colnames, rem_colnames IN
-      SELECT fk.schema, fk.table_name, fk.constraint_name, fk."deferrable", fk.deferred, fk.delete_rule,
-             fk.remote_schema, fk.remote_table,
-             array_agg(fk.column_name ORDER BY fk.position),
-             array_agg(fk.remote_column ORDER BY fk.position)
-      FROM foreign_keys fk
-         JOIN tables tl
-            USING (schema, table_name)
-         JOIN tables tf
-            ON fk.remote_schema = tf.schema AND fk.remote_table = tf.table_name
-      WHERE tl.migrate
-        AND tf.migrate
-        AND fk.migrate
-      GROUP BY fk.schema, fk.table_name, fk.constraint_name, fk."deferrable",
-               fk.deferred, fk.delete_rule, fk.remote_schema, fk.remote_table
-      ORDER BY fk.schema, fk.table_name, fk.constraint_name
+   FOR sch, tab, stmt IN
+      SELECT schema_name, table_name, statement
+         FROM construct_fkey_constraints_statements(plugin, pgstage_schema)
    LOOP
-      separator := '';
-      stmt := format('ALTER TABLE %I.%I ADD CONSTRAINT %I FOREIGN KEY (', sch, tab, cons);
-      FOREACH colname IN ARRAY colnames
-      LOOP
-         stmt := stmt || separator || format('%I', colname);
-         separator := ', ';
-      END LOOP;
-
-      separator := '';
-      stmt := stmt || format(') REFERENCES %I.%I (', rem_sch, rem_tab);
-      FOREACH rem_colname IN ARRAY rem_colnames
-      LOOP
-         stmt := stmt || separator || format('%I', rem_colname);
-         separator := ', ';
-      END LOOP;
-
-      stmt := stmt || format(') ON DELETE %s%s DEFERRABLE INITIALLY %s',
-                             delrule,
-                             CASE WHEN candefer THEN '' ELSE ' NOT' END,
-                             CASE WHEN is_deferred THEN 'DEFERRED' ELSE 'IMMEDIATE' END);
-
       IF NOT execute_statements(
          operation => 'foreign key constraint',
          schema => sch,
@@ -1547,17 +1453,10 @@ BEGIN
    RAISE NOTICE 'Creating CHECK constraints ...';
    SET LOCAL client_min_messages = warning;
 
-   /* loop through all check constraints except NOT NULL checks */
-   FOR sch, tab, cons, candefer, is_deferred, expr IN
-      SELECT schema, table_name, c.constraint_name, c."deferrable", c.deferred, c.condition
-      FROM checks c
-         JOIN tables t
-            USING (schema, table_name)
-      WHERE t.migrate
-        AND c.migrate
+   FOR sch, tab, stmt IN
+      SELECT schema_name, table_name, statement
+         FROM construct_check_constraints_statements(plugin, pgstage_schema)
    LOOP
-      stmt := format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK (%s)', sch, tab, cons, expr);
-
       IF NOT execute_statements(
          operation => 'check constraint',
          schema => sch,
@@ -1573,18 +1472,10 @@ BEGIN
    RAISE NOTICE 'Setting column default values ...';
    SET LOCAL client_min_messages = warning;
 
-   /* loop through all default expressions */
-   FOR sch, tab, colname, expr IN
-      SELECT schema, table_name, c.column_name, c.default_value
-      FROM columns c
-         JOIN tables t
-            USING (schema, table_name)
-      WHERE t.migrate
-        AND c.default_value IS NOT NULL
+   FOR sch, tab, stmt IN
+      SELECT schema_name, table_name, statement
+         FROM construct_defaults_statements(plugin, pgstage_schema)
    LOOP
-      stmt := format('ALTER TABLE %I.%I ALTER %I SET DEFAULT %s',
-                      sch, tab, colname, expr);
-
       IF NOT execute_statements(
          operation => 'column default',
          schema => sch,
@@ -2099,3 +1990,196 @@ END;$$;
 
 COMMENT ON FUNCTION construct_indexes_statements(name,name) IS
    'construct and return the CREATE INDEX statements from staging schema';
+
+CREATE FUNCTION construct_key_constraints_statements(
+   plugin         name,
+   pgstage_schema name DEFAULT NAME 'pgsql_stage'
+) RETURNS TABLE (
+   schema_name name,
+   table_name  name,
+   statement   text
+) LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+$$DECLARE
+   cons        name;
+   candefer    boolean;
+   is_deferred boolean;
+   prim        boolean;
+   colnames    name[];
+   separator   text;
+   colname     name;
+BEGIN
+   /* set "search_path" to the PostgreSQL staging schema */
+   EXECUTE format('SET LOCAL search_path = %I', pgstage_schema);
+
+   /* loop through all key constraint columns */
+   FOR schema_name, table_name, cons, candefer, is_deferred, prim, colnames IN
+      SELECT schema, k.table_name, k.constraint_name, k."deferrable", k.deferred,
+             k.is_primary, array_agg(k.column_name ORDER BY k.position)
+      FROM keys k
+         JOIN tables t
+            USING (schema, table_name)
+      WHERE t.migrate
+        AND k.migrate
+      GROUP BY schema, k.table_name, k.constraint_name, k."deferrable", k.deferred, k.is_primary
+      ORDER BY schema, k.table_name, k.constraint_name
+   LOOP
+      statement := format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s (', schema_name, table_name, cons,
+                      CASE WHEN prim THEN 'PRIMARY KEY' ELSE 'UNIQUE' END);
+
+      separator := '';
+      FOREACH colname IN ARRAY colnames
+      LOOP
+         statement := statement || separator || format('%I', colname);
+         separator := ', ';
+      END LOOP;
+
+      statement := statement || format(')%s DEFERRABLE INITIALLY %s',
+                             CASE WHEN candefer THEN '' ELSE ' NOT' END,
+                             CASE WHEN is_deferred THEN 'DEFERRED' ELSE 'IMMEDIATE' END);
+
+      RETURN next;
+   END LOOP;
+END;$$;
+
+COMMENT ON FUNCTION construct_key_constraints_statements(name,name) IS
+   'construct and return the ADD (primary or unique) CONSTRAINT statements from staging schema';
+
+CREATE FUNCTION construct_fkey_constraints_statements(
+   plugin         name,
+   pgstage_schema name DEFAULT NAME 'pgsql_stage'
+) RETURNS TABLE (
+   schema_name name,
+   table_name  name,
+   statement   text
+) LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+$$DECLARE
+   cons         name;
+   candefer     boolean;
+   is_deferred  boolean;
+   delrule      text;
+   rem_sch      name;
+   rem_tab      name;
+   colnames     name[];
+   rem_colname  name;
+   rem_colnames name[];
+   separator    text;
+   colname      name;
+BEGIN
+   /* set "search_path" to the PostgreSQL staging schema */
+   EXECUTE format('SET LOCAL search_path = %I', pgstage_schema);
+
+   /* loop through all foreign key constraint columns */
+   FOR schema_name, table_name, cons, candefer, is_deferred, delrule,
+       rem_sch, rem_tab, colnames, rem_colnames IN
+      SELECT fk.schema, fk.table_name, fk.constraint_name, fk."deferrable", fk.deferred, fk.delete_rule,
+             fk.remote_schema, fk.remote_table,
+             array_agg(fk.column_name ORDER BY fk.position),
+             array_agg(fk.remote_column ORDER BY fk.position)
+      FROM foreign_keys fk
+         JOIN tables tl
+            USING (schema, table_name)
+         JOIN tables tf
+            ON fk.remote_schema = tf.schema AND fk.remote_table = tf.table_name
+      WHERE tl.migrate
+        AND tf.migrate
+        AND fk.migrate
+      GROUP BY fk.schema, fk.table_name, fk.constraint_name, fk."deferrable",
+               fk.deferred, fk.delete_rule, fk.remote_schema, fk.remote_table
+      ORDER BY fk.schema, fk.table_name, fk.constraint_name
+   LOOP
+      separator := '';
+      statement := format('ALTER TABLE %I.%I ADD CONSTRAINT %I FOREIGN KEY (', schema_name, table_name, cons);
+      FOREACH colname IN ARRAY colnames
+      LOOP
+         statement := statement || separator || format('%I', colname);
+         separator := ', ';
+      END LOOP;
+
+      separator := '';
+      statement := statement || format(') REFERENCES %I.%I (', rem_sch, rem_tab);
+      FOREACH rem_colname IN ARRAY rem_colnames
+      LOOP
+         statement := statement || separator || format('%I', rem_colname);
+         separator := ', ';
+      END LOOP;
+
+      statement := statement || format(') ON DELETE %s%s DEFERRABLE INITIALLY %s',
+                             delrule,
+                             CASE WHEN candefer THEN '' ELSE ' NOT' END,
+                             CASE WHEN is_deferred THEN 'DEFERRED' ELSE 'IMMEDIATE' END);
+
+      RETURN next;
+   END LOOP;
+END;$$;
+
+COMMENT ON FUNCTION construct_fkey_constraints_statements(name,name) IS
+   'construct and return the ADD (foreign) CONSTRAINT statements from staging schema';
+
+CREATE FUNCTION construct_check_constraints_statements(
+   plugin         name,
+   pgstage_schema name DEFAULT NAME 'pgsql_stage'
+) RETURNS TABLE (
+   schema_name name,
+   table_name  name,
+   statement   text
+) LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+$$DECLARE
+   cons        name;
+   candefer    boolean;
+   is_deferred boolean;
+   expr        text;
+BEGIN
+   /* set "search_path" to the PostgreSQL staging schema */
+   EXECUTE format('SET LOCAL search_path = %I', pgstage_schema);
+
+   /* loop through all check constraints except NOT NULL checks */
+   FOR schema_name, table_name, cons, candefer, is_deferred, expr IN
+      SELECT schema, c.table_name, c.constraint_name, c."deferrable", c.deferred, c.condition
+      FROM checks c
+         JOIN tables t
+            USING (schema, table_name)
+      WHERE t.migrate
+        AND c.migrate
+   LOOP
+      statement := format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK (%s)', schema_name, table_name, cons, expr);
+
+      RETURN next;
+   END LOOP;
+END;$$;
+
+COMMENT ON FUNCTION construct_fkey_constraints_statements(name,name) IS
+   'construct and return the ADD (check) CONSTRAINT statements from staging schema';
+
+CREATE FUNCTION construct_defaults_statements(
+   plugin         name,
+   pgstage_schema name DEFAULT NAME 'pgsql_stage'
+) RETURNS TABLE (
+   schema_name name,
+   table_name  name,
+   statement   text
+) LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SET search_path = pg_catalog AS
+$$DECLARE
+   colname name;
+   expr    text;
+BEGIN
+   /* set "search_path" to the PostgreSQL staging schema */
+   EXECUTE format('SET LOCAL search_path = %I', pgstage_schema);
+
+   /* loop through all default expressions */
+   FOR schema_name, table_name, colname, expr IN
+      SELECT schema, c.table_name, c.column_name, c.default_value
+      FROM columns c
+         JOIN tables t
+            USING (schema, table_name)
+      WHERE t.migrate
+        AND c.default_value IS NOT NULL
+   LOOP
+      statement := format('ALTER TABLE %I.%I ALTER %I SET DEFAULT %s',
+                      schema_name, table_name, colname, expr);
+
+      RETURN next;
+   END LOOP;
+END;$$;
+
+COMMENT ON FUNCTION construct_defaults_statements(name,name) IS
+   'construct and return the ALTER SET DEFAULT statements from staging schema';
