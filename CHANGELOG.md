@@ -36,6 +36,10 @@
 - Call the translation function on index expressions.  
   Patch by Florent Jardin.
 
+- Fix sequence's start value computation by taking into account the increment
+  value.  
+  Patch by Florent Jardin.
+
 # Version 1.0.0, released 2023-02-08 #
 
 ## Enhancements: ##

@@ -14,7 +14,8 @@ SELECT results_eq(
 SELECT results_eq(
     $$ SELECT statement FROM extschema.construct_sequences_statements() $$,
     ARRAY[
-        'CREATE SEQUENCE sch1.seq1 INCREMENT 1 MINVALUE 1 MAXVALUE 100 START 2 CACHE 10 NO CYCLE'
+        'CREATE SEQUENCE sch1.seq1 INCREMENT 1 MINVALUE 1 MAXVALUE 100 START 2 CACHE 10 NO CYCLE',
+        'CREATE SEQUENCE sch1.seq2 INCREMENT 10 MINVALUE 1 MAXVALUE 100 START 20 CACHE 1 NO CYCLE'
     ],
     'Statements for sequence creation should be correct'
 );
@@ -52,7 +53,7 @@ FROM (
 
 SELECT sequences_are(
     'sch1',
-    ARRAY['seq1']
+    ARRAY['seq1', 'seq2']
 );
 
 SELECT is(

@@ -1671,7 +1671,7 @@ BEGIN
             sch, seq, incr,
             CASE WHEN minv IS NULL THEN 'NO MINVALUE' ELSE 'MINVALUE ' || minv END,
             CASE WHEN maxv IS NULL THEN 'NO MAXVALUE' ELSE 'MAXVALUE ' || maxv END,
-            lastval + 1, cachesiz,
+            lastval + incr, cachesiz,
             CASE WHEN cycl THEN '' ELSE 'NO ' END);
       RETURN next;
    END LOOP;

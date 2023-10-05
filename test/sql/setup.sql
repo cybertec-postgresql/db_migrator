@@ -23,6 +23,7 @@ part1	part1
 
 COPY pgsql_stage.sequences (schema, sequence_name, min_value, max_value, increment_by, cyclical, cache_size, last_value, orig_value) FROM stdin;
 sch1	seq1	1	100	1	f	10	1	1
+sch1	seq2	1	100	10	f	1	10	10
 \.
 
 COPY pgsql_stage.tables (schema, table_name, orig_table, migrate) FROM stdin;
