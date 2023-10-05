@@ -23,6 +23,11 @@
   re-create the extension if you want it in a different schema.  
   Patch by Florent Jardin.
 
+- Add a set of low-level statements functions to separate statement construction
+  from statement execution in migration functions.  Third-party tools can use
+  the output of these statements to parallelize index and constraint creation.  
+  Patch by Florent Jardin.
+
 ## Bugfixes: ##
 
 - Call the translation function on expressions in the partitioning key.  
